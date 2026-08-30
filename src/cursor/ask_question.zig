@@ -1,7 +1,8 @@
 const std = @import("std");
-const ask_user_question = @import("../tools/agent/ask_user_question.zig");
 
 const Allocator = std.mem.Allocator;
+
+const cancel_sentinel = "(user cancelled the question)";
 
 pub const name = "AskQuestion";
 
@@ -59,13 +60,15 @@ pub fn toFxArgs(alloc: Allocator, args_json: []const u8) ![]u8 {
 /// Maps an fx picker result onto Cursor's AskQuestion outcome object.
 pub fn encodeResult(alloc: Allocator, cursor_args_json: []const u8, fx_body: []const u8) ![]u8 {
     const trimmed = std.mem.trim(u8, fx_body, " \t\r\n");
-    if (std.mem.eql(u8, trimmed, ask_user_question.cancel_sentinel)) {
+    if (std.mem.eql(u8, trimmed, cancel_sentinel)) {
         return alloc.dupe(u8, "{\"outcome\":\"cancelled\"}");
     }
-    if (std.mem.eql(u8, trimmed, ask_user_question.not_available_sentinel) or
-        (trimmed.len > 0 and trimmed[0] == '('))
-    {
-        return skippedJson(alloc, trimmed);
+    if (trimmed.len > 0 and trimmed[0] == '(') {
+        const reason: []const u8 = if (std.mem.indexOf(u8, trimmed, "only available") != null)
+            "AskQuestion is only available in the interactive shell"
+        else
+            "AskQuestion arguments were invalid";
+        return skippedJson(alloc, reason);
     }
     if (trimmed.len == 0 or (trimmed[0] != '[' and trimmed[0] != '{')) {
         return skippedJson(alloc, trimmed);
@@ -242,11 +245,14 @@ test "encodeResult maps selected labels onto Cursor option ids" {
 
 test "encodeResult maps cancel and skipped sentinels" {
     const alloc = std.testing.allocator;
-    const cancelled = try encodeResult(alloc, "{}", ask_user_question.cancel_sentinel);
+    const cancelled = try encodeResult(alloc, "{}", cancel_sentinel);
     defer alloc.free(cancelled);
     try std.testing.expectEqualStrings("{\"outcome\":\"cancelled\"}", cancelled);
 
-    const skipped = try encodeResult(alloc, "{}", ask_user_question.not_available_sentinel);
+    const skipped = try encodeResult(alloc, "{}", "(ask_user_question is only available in the interactive shell; ask the user freeform instead)");
     defer alloc.free(skipped);
-    try std.testing.expect(std.mem.indexOf(u8, skipped, "\"outcome\":\"skipped\"") != null);
+    try std.testing.expectEqualStrings(
+        "{\"outcome\":\"skipped\",\"reason\":\"AskQuestion is only available in the interactive shell\"}",
+        skipped,
+    );
 }
