@@ -84,6 +84,15 @@ pub const Client = struct {
         return self.alloc.dupe(u8, agent_id);
     }
 
+    pub fn waitLiveRun(self: Client, run_id: []const u8) !void {
+        const run_q = try quoted(self.alloc, run_id);
+        defer self.alloc.free(run_q);
+        const req = try std.fmt.allocPrint(self.alloc, "{{\"runId\":{s}}}", .{run_q});
+        defer self.alloc.free(req);
+        const body = try self.transport.unaryJson("SdkAgentService", "WaitLiveRun", req);
+        self.alloc.free(body);
+    }
+
     pub fn cancelRun(self: Client, run_id: []const u8, agent_id: []const u8) !void {
         const run_q = try quoted(self.alloc, run_id);
         defer self.alloc.free(run_q);

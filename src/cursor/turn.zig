@@ -101,6 +101,14 @@ fn processQueuedPromptInner(
         return err;
     };
 
+    if (stream.run_id) |run_id| {
+        handle.client.waitLiveRun(run_id) catch |err| {
+            const detail = @import("connect.zig").lastError();
+            try deps.push_system_notice(deps.ctx, if (detail.len > 0) detail else @errorName(err));
+            return err;
+        };
+    }
+
     try deps.push_tool_lifecycle(deps.ctx, .{
         .turn_finished = .{
             .turn_id = job.turn_id,

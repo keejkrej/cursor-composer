@@ -12,6 +12,19 @@
 
 $ErrorActionPreference = "Stop"
 
+# Native Windows binaries are not published yet (the TUI does not compile for
+# Windows on Zig 0.16). Use WSL or a Linux/macOS host:
+#   wsl -- curl -fsSL https://github.com/keejkrej/cursor-composer/releases/latest/download/install | bash
+if (-not $env:CC_ARCHIVE) {
+    Write-Error @"
+cc does not ship a native Windows build yet.
+Install inside WSL, Linux, or macOS:
+
+  curl -fsSL https://github.com/keejkrej/cursor-composer/releases/latest/download/install | bash
+"@
+    exit 1
+}
+
 $Repo = if ($env:CC_REPO) { $env:CC_REPO } else { "keejkrej/cursor-composer" }
 $InstallDir = if ($env:CC_INSTALL_DIR) {
     $env:CC_INSTALL_DIR

@@ -108,6 +108,7 @@ test "mock bridge create send stream resume and cancel" {
     var collected = Collected{ .alloc = alloc };
     defer collected.deinit();
     try client.send(created, "hello", "composer-2.5", collectMessage, @ptrCast(&collected));
+    try client.waitLiveRun("run_mock_1");
     try std.testing.expect(collected.messages.items.len >= 3);
 
     var saw_assistant = false;

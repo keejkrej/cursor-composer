@@ -17,20 +17,16 @@ macOS / Linux:
 curl -fsSL https://github.com/keejkrej/cursor-composer/releases/latest/download/install | bash
 ```
 
-Windows (PowerShell):
+Windows: there is no native `cc.exe` yet (the fx TUI does not compile for Windows on Zig 0.16). Use WSL or a Linux/macOS machine with the curl installer above. `install.ps1` exists for a later Windows build and for `CC_ARCHIVE=` local archives.
 
-```powershell
-irm https://github.com/keejkrej/cursor-composer/releases/latest/download/install.ps1 | iex
-```
-
-That installs `cc` and `cursor-sdk-bridge` into `~/.cc/bin` (or `%USERPROFILE%\.cc\bin`). Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.1.0`. Then:
+That installs `cc` and `cursor-sdk-bridge` into `~/.cc/bin`. Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.1.0`. Then:
 
 ```bash
 export CURSOR_API_KEY="your-key"
 cc
 ```
 
-GitHub publishes archives for linux-x64/arm64, darwin-x64/arm64, and windows-x64/arm64 on each `v*` tag (or via the Release workflow dispatch). After a release exists, the installers above download it.
+GitHub publishes archives for linux-x64/arm64 and darwin-x64/arm64 on each `v*` tag (or via the Release workflow dispatch). After a release exists, the installer above downloads it.
 
 ## Requirements
 

@@ -49,6 +49,8 @@ class Handler(BaseHTTPRequestHandler):
             self._unary({"agentId": agent_id})
         elif path.endswith("/CancelRun"):
             self._unary({})
+        elif path.endswith("/WaitLiveRun"):
+            self._unary({"result": {"status": "FINISHED"}})
         elif path.endswith("/Shutdown"):
             self._unary({})
         elif path.endswith("/Me"):
