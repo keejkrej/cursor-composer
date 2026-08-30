@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-**Advertise Cursor `AskQuestion` by converting the fx `ask_user_question` schema.**
+**Advertise Cursor's native `AskQuestion` schema; convert to the fx picker only inside `cc`.**
 
 ### Improvements
 
-- **Host questions**: `CreateAgent` sends one `custom_tools` entry named `AskQuestion`, using the existing fx description and input schema. The CallCustomTool callback is still required so answers can return to the agent; inbound `ask_user_question` names still map onto the same picker.
+- **Host questions**: `CreateAgent` advertises one `custom_tools` entry named `AskQuestion` with Cursor's `id` / `prompt` / `options[{id,label}]` / `allowMultiple` schema. The callback converts that payload into the fx question picker and returns `{outcome, answers:[{questionId, selectedOptionIds}]}`. Nothing fx-specific is advertised.
 
 ## 0.2.1
 

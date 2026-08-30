@@ -200,6 +200,8 @@ test "create and resume agent JSON include customTools" {
     try std.testing.expect(std.mem.indexOf(u8, created, "\"customTools\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"AskQuestion\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"ask_user_question\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"prompt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"allowMultiple\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"agentId\"") == null);
     {
         const parsed = try std.json.parseFromSlice(std.json.Value, alloc, created, .{});
