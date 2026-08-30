@@ -30,8 +30,20 @@ pub fn resolveBridgeBin() []const u8 {
 }
 
 pub fn resolveModel(preferred: []const u8) []const u8 {
-    if (preferred.len > 0 and !std.mem.eql(u8, preferred, "auto")) return preferred;
-    return io_mod.getenv("CURSOR_MODEL") orelse default_model;
+    return chooseModel(preferred, io_mod.getenv("CURSOR_MODEL"));
+}
+
+pub fn chooseModel(preferred: []const u8, env_model: ?[]const u8) []const u8 {
+    if (env_model) |model| {
+        if (model.len > 0) return model;
+    }
+    // FX defaults look like provider/model (moonshotai/kimi-k3). Cursor ids do not.
+    if (preferred.len > 0 and !std.mem.eql(u8, preferred, "auto") and
+        std.mem.indexOfScalar(u8, preferred, '/') == null)
+    {
+        return preferred;
+    }
+    return default_model;
 }
 
 pub const Session = struct {
@@ -248,6 +260,13 @@ pub fn shutdown() void {
 
 test "default model is composer-2.5" {
     try std.testing.expectEqualStrings("composer-2.5", default_model);
+}
+
+test "FX gateway model ids fall back to composer-2.5" {
+    try std.testing.expectEqualStrings("composer-2.5", chooseModel("moonshotai/kimi-k3", null));
+    try std.testing.expectEqualStrings("composer-2.5", chooseModel("auto", null));
+    try std.testing.expectEqualStrings("grok-4.6", chooseModel("grok-4.6", null));
+    try std.testing.expectEqualStrings("composer-2.5", chooseModel("grok-4.6", "composer-2.5"));
 }
 
 test "persist and resume last agent id without a bridge" {

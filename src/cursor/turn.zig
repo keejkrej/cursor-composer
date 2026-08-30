@@ -61,7 +61,11 @@ fn processQueuedPromptInner(
         const message = switch (err) {
             error.MissingCursorApiKey => "Set CURSOR_API_KEY to call the Cursor Agent API via the SDK Bridge.",
             error.BridgeBinaryMissing => "cursor-sdk-bridge not found. Run scripts/fetch-bridge.sh or set CURSOR_SDK_BRIDGE_BIN.",
-            else => @errorName(err),
+            else => blk: {
+                const detail = @import("connect.zig").lastError();
+                if (detail.len > 0) break :blk detail;
+                break :blk @errorName(err);
+            },
         };
         try deps.push_system_notice(deps.ctx, message);
         return err;
@@ -92,7 +96,8 @@ fn processQueuedPromptInner(
         @ptrCast(&stream),
     ) catch |err| {
         if (config.cancel_flag.load(.seq_cst)) return error.Cancelled;
-        try deps.push_system_notice(deps.ctx, @errorName(err));
+        const detail = @import("connect.zig").lastError();
+        try deps.push_system_notice(deps.ctx, if (detail.len > 0) detail else @errorName(err));
         return err;
     };
 
@@ -156,7 +161,10 @@ fn rememberRunId(stream: *StreamState, payload: []const u8) void {
 fn present(stream: *StreamState, action: events.Action) !void {
     const deps = stream.deps;
     switch (action) {
-        .assistant_text => |text| try deps.push_text(deps.ctx, .{ .assistant_source = text }),
+        .assistant_text => |text| {
+            try deps.push_text(deps.ctx, .{ .assistant_source = text });
+            try deps.push_text(deps.ctx, .{ .assistant_rendered = text });
+        },
         .thinking_text => |text| try deps.push_text(deps.ctx, .{ .operational = text }),
         .status => |text| try deps.push_system_notice(deps.ctx, text),
         .usage, .ignore => {},

@@ -35,6 +35,20 @@ pub fn isEndStream(flags: u8) bool {
     return flags & 0x02 != 0;
 }
 
+var last_error_buf: [256]u8 = undefined;
+var last_error_len: usize = 0;
+
+pub fn lastError() []const u8 {
+    return last_error_buf[0..last_error_len];
+}
+
+fn rememberError(comptime fmt: []const u8, args: anytype) void {
+    const written = std.fmt.bufPrint(&last_error_buf, fmt, args) catch blk: {
+        break :blk last_error_buf[0..];
+    };
+    last_error_len = written.len;
+}
+
 pub const Transport = struct {
     alloc: Allocator,
     base_url: []const u8,
@@ -77,14 +91,24 @@ pub const Transport = struct {
             },
             .response_writer = &response_writer,
             .redirect_behavior = .unhandled,
-        }) catch return error.ConnectUnaryFailed;
+        }) catch |err| {
+            rememberError("unary {s} {s} fetch={s}", .{ service, method, @errorName(err) });
+            return error.ConnectUnaryFailed;
+        };
 
         const body = try self.alloc.dupe(u8, response_writer.buffered());
         if (result.status == .unauthorized) {
             self.alloc.free(body);
+            rememberError("unary {s} {s} status=401", .{ service, method });
             return error.Unauthenticated;
         }
         if (@intFromEnum(result.status) < 200 or @intFromEnum(result.status) > 299) {
+            rememberError("unary {s} {s} status={d} body={s}", .{
+                service,
+                method,
+                @intFromEnum(result.status),
+                body[0..@min(body.len, 180)],
+            });
             self.alloc.free(body);
             return error.ConnectUnaryFailed;
         }

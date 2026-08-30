@@ -37,6 +37,6 @@ jobs:
           CURSOR_API_KEY=test-key \
             CURSOR_SDK_BRIDGE_URL="$URL" \
             CURSOR_SDK_BRIDGE_TOKEN=test-bridge-token \
-            ./zig-out/bin/cc ask --quiet "hello" | tee /tmp/ask-mock.txt
+            ./zig-out/bin/cc ask "hello" | tee /tmp/ask-mock.txt
           grep -q "hello from mock" /tmp/ask-mock.txt
           kill "$(cat /tmp/mock-bridge.pid)" || true
