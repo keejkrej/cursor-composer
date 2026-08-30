@@ -3,6 +3,7 @@ const io_mod = @import("../core/shared/io.zig");
 const client_mod = @import("client.zig");
 const events = @import("events.zig");
 const session = @import("session.zig");
+const model_catalog = @import("../core/gateway/model_catalog.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -137,6 +138,54 @@ test "mock bridge create send stream resume and cancel" {
     try std.testing.expectEqualStrings("agent_prior", resumed);
 
     try client.cancelRun("run_mock_1", created);
+}
+
+test "ListModels live catalog is not the baked-in six" {
+    const alloc = std.testing.allocator;
+    const catalog = @import("catalog.zig");
+
+    var mock = try MockBridge.spawn(alloc);
+    defer mock.stop();
+
+    try installBridgeEnviron(mock.url);
+    defer clearBridgeEnviron();
+
+    session.shutdown();
+    defer session.shutdown();
+
+    const attached = (try session.listModelsJson(alloc)) orelse return error.ExpectedListModels;
+    defer alloc.free(attached);
+    var from_session = try catalog.parseListModels(alloc, attached);
+    defer model_catalog.freeModelCatalog(alloc, &from_session);
+    try std.testing.expect(containsId(from_session.items, "mock-live-model"));
+    try std.testing.expect(from_session.items.len != catalog.known_ids.len);
+
+    catalog.list_models_fn = session.listModelsJson;
+    defer catalog.list_models_fn = null;
+    const hooked = try catalog.provider.fetch(alloc, .{ .endpoint = "/v1/models" });
+    var from_hook = switch (hooked) {
+        .catalog => |entries| entries,
+        .failure => return error.TestUnexpectedResult,
+    };
+    defer model_catalog.freeModelCatalog(alloc, &from_hook);
+    try std.testing.expect(containsId(from_hook.items, "mock-live-model"));
+    try std.testing.expect(from_hook.items.len != catalog.known_ids.len);
+
+    catalog.list_models_fn = null;
+    const via_env = try catalog.provider.fetch(alloc, .{ .endpoint = "/v1/models" });
+    var from_env = switch (via_env) {
+        .catalog => |entries| entries,
+        .failure => return error.TestUnexpectedResult,
+    };
+    defer model_catalog.freeModelCatalog(alloc, &from_env);
+    try std.testing.expect(containsId(from_env.items, "mock-live-model"));
+}
+
+fn containsId(entries: []const model_catalog.ModelCatalogEntry, id: []const u8) bool {
+    for (entries) |entry| {
+        if (std.mem.eql(u8, entry.id, id)) return true;
+    }
+    return false;
 }
 
 test "session ensure creates then resumes last persisted agent" {

@@ -58,7 +58,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path.endswith("/Me"):
             self._unary({"user": {"id": "user_mock"}})
         elif path.endswith("/ListModels"):
-            self._unary({"models": [{"id": "composer-2.5"}]})
+            # Proto ListModelsResponse.repeated SdkModel items. Include a
+            # mock-only id so tests can tell live catalog from the static six.
+            self._unary(
+                {
+                    "items": [
+                        {"id": "mock-live-model", "displayName": "Mock Live"},
+                        {"id": "composer-2.5"},
+                        {"id": "grok-4.6"},
+                    ]
+                }
+            )
         elif path.endswith("/Send"):
             self._stream(
                 [

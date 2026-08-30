@@ -387,6 +387,10 @@ fn currentBuild() update_target.CurrentBuild {
     };
 }
 
+fn installCursorListModelsHook() void {
+    cursor_catalog.installListModels(cursor_session.listModelsJson);
+}
+
 const App = struct {
     pub const app_version = version;
     pub const host_profile = selected_host_profile;
@@ -1901,6 +1905,7 @@ const App = struct {
     }
 
     pub fn fetchModelIds(self: *App) !std.ArrayList([]u8) {
+        installCursorListModelsHook();
         return AgentAppRuntime.fetchModelIds(
             self,
             if (comptime host_target.is_wasm)
@@ -1912,6 +1917,7 @@ const App = struct {
     }
 
     pub fn startModelCacheWarmup(self: *App) void {
+        installCursorListModelsHook();
         if (comptime host_profile.cooperative_agent) {
             if (self.auth.credentialNeedsRefresh()) {
                 debug_trace.logf("auth", "model_cache_warmup_deferred reason=credential_refresh_required", .{});
