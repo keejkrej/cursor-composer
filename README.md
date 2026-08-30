@@ -23,7 +23,7 @@ Windows (PowerShell):
 irm https://github.com/keejkrej/cursor-composer/releases/latest/download/install.ps1 | iex
 ```
 
-That installs `cc` and `cursor-sdk-bridge` into `~/.cc/bin`. Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.2.1`. Then:
+That installs `cc` and `cursor-sdk-bridge` into `~/.cc/bin`. Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.2.2`. Then:
 
 ```bash
 export CURSOR_API_KEY="your-key"

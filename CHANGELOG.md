@@ -1,6 +1,6 @@
 # fx
 
-## Unreleased
+## 0.2.2
 
 **Advertise Cursor's native `AskQuestion` schema; convert to the fx picker only inside `cc`.**
 
