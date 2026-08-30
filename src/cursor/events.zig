@@ -33,6 +33,40 @@ pub fn classifyToolActivity(name: []const u8) types.ToolActivityKind {
     return host_tools.classifyActivity(name);
 }
 
+/// Bridge run-lifecycle tokens. FX already has a turn spinner; these should
+/// not appear as `● System` rows.
+pub fn isRoutineLifecycleStatus(text: []const u8) bool {
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    if (trimmed.len == 0) return true;
+    const names = [_][]const u8{
+        "running",
+        "finished",
+        "completed",
+        "complete",
+        "done",
+        "started",
+        "starting",
+        "waiting",
+        "pending",
+        "cancelled",
+        "canceled",
+        "success",
+    };
+    if (eqlAnyIgnoreCase(trimmed, &names)) return true;
+    const colon = std.mem.findScalar(u8, trimmed, ':') orelse return false;
+    const left = std.mem.trim(u8, trimmed[0..colon], " \t");
+    const right = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
+    if (right.len == 0) return eqlAnyIgnoreCase(left, &names);
+    return eqlAnyIgnoreCase(left, &names) and eqlAnyIgnoreCase(right, &names);
+}
+
+fn eqlAnyIgnoreCase(text: []const u8, names: []const []const u8) bool {
+    for (names) |name| {
+        if (std.ascii.eqlIgnoreCase(text, name)) return true;
+    }
+    return false;
+}
+
 pub fn actionFromEnvelope(alloc: std.mem.Allocator, payload: []const u8) !Action {
     const parsed = std.json.parseFromSlice(std.json.Value, alloc, payload, .{}) catch return .ignore;
     defer parsed.deinit();
@@ -120,7 +154,11 @@ fn actionFromSdkMessage(alloc: std.mem.Allocator, message: std.json.Value) !Acti
             "RUNNING";
         const detail = json_util.stringGet(payload, "message") orelse
             json_util.stringGet(message, "message") orelse
+            json_util.stringGet(payload, "text") orelse
             "";
+        if (isRoutineLifecycleStatus(status) and (detail.len == 0 or isRoutineLifecycleStatus(detail))) {
+            return .ignore;
+        }
         if (detail.len > 0) {
             return .{ .status = try std.fmt.allocPrint(alloc, "{s}: {s}", .{ status, detail }) };
         }
@@ -199,6 +237,22 @@ test "AskQuestion stream events map to ask_user_question" {
     defer freeAction(std.testing.allocator, start);
     try std.testing.expectEqualStrings("ask_user_question", start.tool_started.name);
     try std.testing.expectEqual(.ask, classifyToolActivity(start.tool_started.name));
+}
+
+test "routine run status envelopes are ignored" {
+    const running = try actionFromEnvelope(std.testing.allocator,
+        \\{"sdkMessage":{"type":"status","status":"RUNNING","message":{"runId":"run_1"}}}
+    );
+    try std.testing.expect(running == .ignore);
+
+    const finished = try actionFromEnvelope(std.testing.allocator,
+        \\{"sdkMessage":{"type":"status","status":"FINISHED"}}
+    );
+    try std.testing.expect(finished == .ignore);
+
+    try std.testing.expect(isRoutineLifecycleStatus("RUNNING"));
+    try std.testing.expect(isRoutineLifecycleStatus("finished"));
+    try std.testing.expect(!isRoutineLifecycleStatus("rate limited"));
 }
 
 test "empty envelope is keepalive ignore" {

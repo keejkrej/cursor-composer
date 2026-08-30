@@ -84,12 +84,6 @@ fn processQueuedPromptInner(
     };
     defer if (stream.run_id) |run_id| stream.alloc.free(run_id);
 
-    if (resume_hint != null) {
-        try deps.push_system_notice(deps.ctx, "Resuming Cursor agent via the SDK Bridge.");
-    } else {
-        try deps.push_system_notice(deps.ctx, "Created Cursor agent via the SDK Bridge.");
-    }
-
     handle.client.send(
         handle.agent_id,
         job.prompt,
@@ -176,7 +170,11 @@ fn present(stream: *StreamState, action: events.Action) !void {
             try deps.push_text(deps.ctx, .{ .assistant_rendered = text });
         },
         .thinking_text => |text| try deps.push_text(deps.ctx, .{ .operational = text }),
-        .status => |text| try deps.push_system_notice(deps.ctx, text),
+        .status => |text| {
+            if (!events.isRoutineLifecycleStatus(text)) {
+                try deps.push_system_notice(deps.ctx, text);
+            }
+        },
         .usage, .ignore => {},
         .terminal_result => |result| {
             if (result.error_message) |err_text| {
