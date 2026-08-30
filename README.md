@@ -89,7 +89,7 @@ One-shot:
 - The agent loop, built-in tools (`Read`, `Write`, `Shell`, `Grep`, `Glob`, `WebSearch`, `WebFetch`, `Task`), planning, and file edits
 - Run streaming, cancellation, and usage
 
-The TUI maps those Cursor tool names onto fx activity kinds so the transcript looks like the original shell. `AskQuestion` / `ask_user_question` is the host exception: `cc` advertises it as a local custom tool, registers a loopback `CallCustomTool` callback with the bridge, and shows the existing fx question picker. Headless `cc ask` returns the interactive-only sentinel instead of blocking. Other host-only fx tools (memory, skills, MCP) stay unwired — they cannot run inside Cursor's loop.
+The TUI maps those Cursor tool names onto fx activity kinds so the transcript looks like the original shell. `ask_user_question` is the host exception: `cc` converts the existing fx tool schema into `LocalAgentOptions.custom_tools`, registers a loopback `CallCustomTool` callback with the bridge, and shows the existing fx question picker. Inbound Cursor names like `AskQuestion` still map onto that same picker. Headless `cc ask` returns the interactive-only sentinel instead of blocking. Other host-only fx tools (memory, skills, MCP) stay unwired — they cannot run inside Cursor's loop.
 
 ## Bridge
 

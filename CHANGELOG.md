@@ -1,5 +1,13 @@
 # fx
 
+## Unreleased
+
+**Advertise `ask_user_question` by converting the fx tool schema instead of a parallel `AskQuestion` custom tool.**
+
+### Improvements
+
+- **Host questions**: `CreateAgent` now sends the existing fx `ask_user_question` description and input schema as `custom_tools`. The CallCustomTool callback is still required so answers can return to the agent; inbound `AskQuestion` names still map onto the same picker.
+
 ## 0.2.1
 
 **Fix CreateAgent `failed_precondition` when advertising AskQuestion: register the host tool callback before create/resume.**

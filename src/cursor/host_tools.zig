@@ -1,20 +1,14 @@
 const std = @import("std");
 const types = @import("../core/shared/types.zig");
+const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
+const ask_schema = @import("../tools/agent/ask_user_question_schema.zig");
 
 const Allocator = std.mem.Allocator;
 
-const ask_description =
-    "Ask the user 1-4 multiple-choice questions in the interactive cc TUI when a concrete decision blocks progress after local files, git state, or tool output cannot answer it.";
-
-const ask_input_schema =
-    \\{"type":"object","properties":{"questions":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","properties":{"question":{"type":"string","description":"Specific blocking decision shown to the user"},"options":{"type":"array","minItems":2,"maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label"]}}},"required":["question","options"]}}},"required":["questions"]}
-;
-
 /// Tools the host executes. Cursor built-ins (Read/Write/Shell/…) stay in the
-/// bridge; these names are advertised so the model can reach the fx TUI.
+/// bridge; `ask_user_question` is advertised so the model can reach the fx TUI.
 pub const advertised = [_][]const u8{
-    "AskQuestion",
-    "ask_user_question",
+    ask_schema.name,
 };
 
 pub fn isQuestionTool(name: []const u8) bool {
@@ -27,7 +21,7 @@ pub fn isQuestionTool(name: []const u8) bool {
 }
 
 pub fn canonicalName(name: []const u8) []const u8 {
-    if (isQuestionTool(name)) return "ask_user_question";
+    if (isQuestionTool(name)) return ask_schema.name;
     if (eqlAny(name, &.{ "Read", "read_file" })) return "read_file";
     if (eqlAny(name, &.{ "Write", "write_file" })) return "write_file";
     if (eqlAny(name, &.{ "StrReplace", "Edit", "edit_file", "ApplyPatch" })) return "edit_file";
@@ -42,7 +36,7 @@ pub fn canonicalName(name: []const u8) []const u8 {
 
 pub fn classifyActivity(name: []const u8) types.ToolActivityKind {
     const canonical = canonicalName(name);
-    if (std.mem.eql(u8, canonical, "ask_user_question")) return .ask;
+    if (std.mem.eql(u8, canonical, ask_schema.name)) return .ask;
     if (std.mem.eql(u8, canonical, "read_file")) return .read;
     if (std.mem.eql(u8, canonical, "write_file")) return .write;
     if (std.mem.eql(u8, canonical, "edit_file")) return .edit;
@@ -51,20 +45,31 @@ pub fn classifyActivity(name: []const u8) types.ToolActivityKind {
     return .command;
 }
 
+/// Converts an fx `FunctionSchema` into one `LocalAgentOptions.custom_tools` entry.
+pub fn customToolDefinitionJson(alloc: Allocator, schema: model_tool_schema.FunctionSchema) ![]u8 {
+    const input_schema = try model_tool_schema.objectSchemaJsonAlloc(alloc, schema.input_schema);
+    defer alloc.free(input_schema);
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    try std.json.Stringify.value(schema.name, .{}, &out.writer);
+    try out.writer.writeAll(":{\"description\":");
+    try std.json.Stringify.value(schema.description, .{}, &out.writer);
+    try out.writer.writeAll(",\"inputSchema\":");
+    try out.writer.writeAll(input_schema);
+    try out.writer.writeByte('}');
+    return out.toOwnedSlice();
+}
+
 /// JSON object for `LocalAgentOptions.custom_tools`.
 pub fn customToolsJson(alloc: Allocator) ![]u8 {
+    const entry = try customToolDefinitionJson(alloc, ask_schema.function_schema);
+    defer alloc.free(entry);
+
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     try out.writer.writeByte('{');
-    for (advertised, 0..) |name, index| {
-        if (index > 0) try out.writer.writeByte(',');
-        try std.json.Stringify.value(name, .{}, &out.writer);
-        try out.writer.writeAll(":{\"description\":");
-        try std.json.Stringify.value(ask_description, .{}, &out.writer);
-        try out.writer.writeAll(",\"inputSchema\":");
-        try out.writer.writeAll(ask_input_schema);
-        try out.writer.writeByte('}');
-    }
+    try out.writer.writeAll(entry);
     try out.writer.writeByte('}');
     return out.toOwnedSlice();
 }
@@ -177,15 +182,28 @@ test "Cursor built-in names map to fx tools" {
     try std.testing.expectEqual(types.ToolActivityKind.command, classifyActivity("Shell"));
 }
 
-test "custom tools JSON advertises both AskQuestion names" {
+test "custom tools JSON converts the fx ask_user_question schema" {
     const json = try customToolsJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"AskQuestion\"") != null);
+
+    const expected_schema = try model_tool_schema.objectSchemaJsonAlloc(
+        std.testing.allocator,
+        ask_schema.input_schema,
+    );
+    defer std.testing.allocator.free(expected_schema);
+
+    try std.testing.expectEqual(@as(usize, 1), advertised.len);
+    try std.testing.expectEqualStrings(ask_schema.name, advertised[0]);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"AskQuestion\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"ask_user_question\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"inputSchema\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, expected_schema) != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, ask_schema.description) != null);
     {
         const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json, .{});
         defer parsed.deinit();
+        try std.testing.expectEqual(@as(usize, 1), parsed.value.object.count());
+        const tool = parsed.value.object.get("ask_user_question").?;
+        try std.testing.expectEqualStrings(ask_schema.description, tool.object.get("description").?.string);
     }
 }
 
