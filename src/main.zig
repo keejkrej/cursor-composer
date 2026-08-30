@@ -4,7 +4,7 @@ const build_options = @import("build_options");
 const io_mod = @import("core/shared/io.zig");
 const os_compat = @import("core/shared/os_compat.zig");
 
-pub const version = "0.2.2";
+pub const version = "0.2.3";
 
 /// Zig 0.16 Windows `File.Permissions` has no `fromMode`/`toMode`.
 pub const std_options_FilePermissions = @import("file_permissions.zig").Permissions;
