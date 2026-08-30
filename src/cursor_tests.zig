@@ -7,5 +7,6 @@ comptime {
     _ = @import("cursor/catalog.zig");
     _ = @import("cursor/paths.zig");
     _ = @import("cursor/session.zig");
+    _ = @import("cursor/host_tools.zig");
     _ = @import("cursor/integration.zig");
 }

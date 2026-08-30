@@ -1,5 +1,4 @@
 const std = @import("std");
-const types = @import("../core/shared/types.zig");
 const worker_runtime = @import("../core/agent/worker_runtime.zig");
 const runtime_deps = @import("../core/agent/runtime/deps.zig");
 const runtime_config = @import("../core/agent/runtime/config.zig");
@@ -10,6 +9,7 @@ const debug_trace = @import("../core/shared/debug_trace.zig");
 const client_mod = @import("client.zig");
 const events = @import("events.zig");
 const session = @import("session.zig");
+const tool_callback = @import("tool_callback.zig");
 
 const Allocator = std.mem.Allocator;
 const AgentRuntimeDeps = runtime_deps.AgentRuntimeDeps;
@@ -71,6 +71,8 @@ fn processQueuedPromptInner(
         return err;
     };
 
+    registerHostTools(handle.client);
+
     var stream = StreamState{
         .alloc = std.heap.c_allocator,
         .deps = deps,
@@ -81,12 +83,6 @@ fn processQueuedPromptInner(
         .run_id = null,
     };
     defer if (stream.run_id) |run_id| stream.alloc.free(run_id);
-
-    if (resume_hint != null) {
-        try deps.push_system_notice(deps.ctx, "Resuming Cursor agent via the SDK Bridge.");
-    } else {
-        try deps.push_system_notice(deps.ctx, "Created Cursor agent via the SDK Bridge.");
-    }
 
     handle.client.send(
         handle.agent_id,
@@ -174,7 +170,11 @@ fn present(stream: *StreamState, action: events.Action) !void {
             try deps.push_text(deps.ctx, .{ .assistant_rendered = text });
         },
         .thinking_text => |text| try deps.push_text(deps.ctx, .{ .operational = text }),
-        .status => |text| try deps.push_system_notice(deps.ctx, text),
+        .status => |text| {
+            if (!events.isRoutineLifecycleStatus(text)) {
+                try deps.push_system_notice(deps.ctx, text);
+            }
+        },
         .usage, .ignore => {},
         .terminal_result => |result| {
             if (result.error_message) |err_text| {
@@ -182,13 +182,7 @@ fn present(stream: *StreamState, action: events.Action) !void {
             }
         },
         .tool_started => |tool| {
-            const kind: types.ToolActivityKind = switch (events.classifyToolActivity(tool.name)) {
-                .read => .read,
-                .list => .list,
-                .write => .write,
-                .edit => .edit,
-                .command => .command,
-            };
+            const kind = events.classifyToolActivity(tool.name);
             try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
                 .id = .{ .turn_id = stream.turn_id, .call_id = tool.call_id },
                 .reconciles_provisional_call_id = null,
@@ -208,4 +202,14 @@ fn present(stream: *StreamState, action: events.Action) !void {
             } });
         },
     }
+}
+
+fn registerHostTools(client: client_mod.Client) void {
+    session.on_shutdown = struct {
+        fn stopCallback() void {
+            tool_callback.stop();
+        }
+    }.stopCallback;
+    const callback = tool_callback.ensure(std.heap.c_allocator) catch return;
+    client.setToolCallback(callback.url, callback.token) catch {};
 }

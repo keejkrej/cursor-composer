@@ -987,6 +987,13 @@ pub fn Runtime(comptime App: type) type {
                 &tool_projection,
                 session_child_capability,
             );
+            if (comptime @hasField(App, "worker")) {
+                const tool_callback = @import("../../cursor/tool_callback.zig");
+                tool_callback.bindHost(.{ .worker = &app.worker, .interactive = true });
+            }
+            defer if (comptime @hasField(App, "worker")) {
+                @import("../../cursor/tool_callback.zig").bindHost(.{});
+            };
             const process_result = @import("../../cursor/runtime.zig").processQueuedPrompt(
                 &deps,
                 semantic_presentation,

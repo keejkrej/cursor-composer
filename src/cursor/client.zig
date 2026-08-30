@@ -1,6 +1,7 @@
 const std = @import("std");
 const connect = @import("connect.zig");
 const json_util = @import("json_util.zig");
+const host_tools = @import("host_tools.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -42,17 +43,7 @@ pub const Client = struct {
     }
 
     pub fn createAgent(self: Client, cwd: []const u8, model: []const u8) ![]u8 {
-        const key = try quoted(self.alloc, self.api_key);
-        defer self.alloc.free(key);
-        const model_q = try quoted(self.alloc, model);
-        defer self.alloc.free(model_q);
-        const cwd_q = try quoted(self.alloc, cwd);
-        defer self.alloc.free(cwd_q);
-        const req = try std.fmt.allocPrint(
-            self.alloc,
-            "{{\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{{\"cwd\":[{s}]}}}}}}",
-            .{ key, model_q, cwd_q },
-        );
+        const req = try agentRequestJson(self.alloc, self.api_key, cwd, model, null);
         defer self.alloc.free(req);
         const body = try self.transport.unaryJson("SdkAgentService", "CreateAgent", req);
         defer self.alloc.free(body);
@@ -65,23 +56,26 @@ pub const Client = struct {
     }
 
     pub fn resumeAgent(self: Client, agent_id: []const u8, cwd: []const u8, model: []const u8) ![]u8 {
-        const key = try quoted(self.alloc, self.api_key);
-        defer self.alloc.free(key);
-        const id_q = try quoted(self.alloc, agent_id);
-        defer self.alloc.free(id_q);
-        const model_q = try quoted(self.alloc, model);
-        defer self.alloc.free(model_q);
-        const cwd_q = try quoted(self.alloc, cwd);
-        defer self.alloc.free(cwd_q);
-        const req = try std.fmt.allocPrint(
-            self.alloc,
-            "{{\"agentId\":{s},\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{{\"cwd\":[{s}]}}}}}}",
-            .{ id_q, key, model_q, cwd_q },
-        );
+        const req = try agentRequestJson(self.alloc, self.api_key, cwd, model, agent_id);
         defer self.alloc.free(req);
         const body = try self.transport.unaryJson("SdkAgentService", "ResumeAgent", req);
         defer self.alloc.free(body);
         return self.alloc.dupe(u8, agent_id);
+    }
+
+    pub fn setToolCallback(self: Client, url: []const u8, auth_token: []const u8) !void {
+        const url_q = try quoted(self.alloc, url);
+        defer self.alloc.free(url_q);
+        const token_q = try quoted(self.alloc, auth_token);
+        defer self.alloc.free(token_q);
+        const req = try std.fmt.allocPrint(
+            self.alloc,
+            "{{\"url\":{s},\"authToken\":{s}}}",
+            .{ url_q, token_q },
+        );
+        defer self.alloc.free(req);
+        const body = try self.transport.unaryJson("SdkBridgeControlService", "SetToolCallback", req);
+        self.alloc.free(body);
     }
 
     pub fn waitLiveRun(self: Client, run_id: []const u8) !void {
@@ -132,6 +126,37 @@ pub const Client = struct {
     }
 };
 
+pub fn agentRequestJson(
+    alloc: Allocator,
+    api_key: []const u8,
+    cwd: []const u8,
+    model: []const u8,
+    agent_id: ?[]const u8,
+) ![]u8 {
+    const key = try quoted(alloc, api_key);
+    defer alloc.free(key);
+    const model_q = try quoted(alloc, model);
+    defer alloc.free(model_q);
+    const cwd_q = try quoted(alloc, cwd);
+    defer alloc.free(cwd_q);
+    const tools = try host_tools.customToolsJson(alloc);
+    defer alloc.free(tools);
+    if (agent_id) |id| {
+        const id_q = try quoted(alloc, id);
+        defer alloc.free(id_q);
+        return std.fmt.allocPrint(
+            alloc,
+            "{{\"agentId\":{s},\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{{\"cwd\":[{s}],\"customTools\":{s}}}}}}}",
+            .{ id_q, key, model_q, cwd_q, tools },
+        );
+    }
+    return std.fmt.allocPrint(
+        alloc,
+        "{{\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{{\"cwd\":[{s}],\"customTools\":{s}}}}}}}",
+        .{ key, model_q, cwd_q, tools },
+    );
+}
+
 fn quoted(alloc: Allocator, text: []const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
@@ -143,4 +168,23 @@ test "json string quoting escapes" {
     const q = try quoted(std.testing.allocator, "say \"hi\"\n");
     defer std.testing.allocator.free(q);
     try std.testing.expectEqualStrings("\"say \\\"hi\\\"\\n\"", q);
+}
+
+test "create and resume agent JSON include customTools" {
+    const alloc = std.testing.allocator;
+    const created = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", null);
+    defer alloc.free(created);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"customTools\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"AskQuestion\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"ask_user_question\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"agentId\"") == null);
+    {
+        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, created, .{});
+        defer parsed.deinit();
+    }
+
+    const resumed = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", "agent_1");
+    defer alloc.free(resumed);
+    try std.testing.expect(std.mem.indexOf(u8, resumed, "\"agentId\":\"agent_1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resumed, "\"customTools\"") != null);
 }

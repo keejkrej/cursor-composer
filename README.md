@@ -86,10 +86,10 @@ One-shot:
 ## What Cursor owns
 
 - Agent create / resume
-- The agent loop, tools, planning, and file edits
+- The agent loop, built-in tools (`Read`, `Write`, `Shell`, `Grep`, `Glob`, `WebSearch`, `WebFetch`, `Task`), planning, and file edits
 - Run streaming, cancellation, and usage
 
-This repository does not implement tools, retries, or an orchestrator for model turns. The compiled TUI always delegates create/send/stream/wait/cancel to Cursor.
+The TUI maps those Cursor tool names onto fx activity kinds so the transcript looks like the original shell. `AskQuestion` / `ask_user_question` is the host exception: `cc` advertises it as a local custom tool, registers a loopback `CallCustomTool` callback with the bridge, and shows the existing fx question picker. Headless `cc ask` returns the interactive-only sentinel instead of blocking. Other host-only fx tools (memory, skills, MCP) stay unwired — they cannot run inside Cursor's loop.
 
 ## Bridge
 
