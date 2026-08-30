@@ -4,6 +4,7 @@ comptime {
     _ = @import("cursor/connect.zig");
     _ = @import("cursor/bridge.zig");
     _ = @import("cursor/client.zig");
+    _ = @import("cursor/paths.zig");
     _ = @import("cursor/session.zig");
     _ = @import("cursor/integration.zig");
 }

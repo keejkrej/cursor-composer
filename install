@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# Install cc (Cursor Composer) and the Cursor SDK Bridge.
+#
+#   curl -fsSL https://github.com/keejkrej/cursor-composer/releases/latest/download/install | bash
+#
+# Optional env:
+#   CC_VERSION       Release tag without leading v (default: latest)
+#   CC_REPO          GitHub repo (default: keejkrej/cursor-composer)
+#   CC_INSTALL_DIR   Directory for binaries (default: ~/.cc/bin)
+#   XDG_BIN_DIR      Used when CC_INSTALL_DIR is unset
+#   CC_ARCHIVE       Local archive path (skip GitHub download)
+#   CC_SKIP_PATH     Set to 1 to skip shell PATH edits
+#   BRIDGE_VERSION   Unused when the archive already contains the bridge
+set -euo pipefail
+
+REPO="${CC_REPO:-keejkrej/cursor-composer}"
+APP_NAME="cc"
+DEFAULT_HOME_BIN="${HOME:-}/.cc/bin"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+info() { printf "${GREEN}%s${NC}\n" "$*"; }
+warn() { printf "${YELLOW}%s${NC}\n" "$*"; }
+die() { printf "${RED}%s${NC}\n" "$*" >&2; exit 1; }
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+detect_filename() {
+  local os arch
+  case "$(uname -s)" in
+    Linux) os=linux ;;
+    Darwin) os=darwin ;;
+    MINGW*|MSYS*|CYGWIN*) os=windows ;;
+    *) die "unsupported OS: $(uname -s)" ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) arch=x64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die "unsupported architecture: $(uname -m)" ;;
+  esac
+  if [[ "$os" == windows ]]; then
+    printf '%s\n' "${APP_NAME}-${os}-${arch}.zip"
+  else
+    printf '%s\n' "${APP_NAME}-${os}-${arch}.tar.gz"
+  fi
+}
+
+resolve_install_dir() {
+  if [[ -n "${CC_INSTALL_DIR:-}" ]]; then
+    printf '%s\n' "$CC_INSTALL_DIR"
+    return
+  fi
+  if [[ -n "${XDG_BIN_DIR:-}" ]]; then
+    printf '%s\n' "$XDG_BIN_DIR"
+    return
+  fi
+  printf '%s\n' "$DEFAULT_HOME_BIN"
+}
+
+github_download_url() {
+  local filename="$1"
+  local version="${CC_VERSION:-}"
+  if [[ -z "$version" ]]; then
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$filename"
+  else
+    printf 'https://github.com/%s/releases/download/v%s/%s\n' "$REPO" "${version#v}" "$filename"
+  fi
+}
+
+download() {
+  local url="$1"
+  local dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL --retry 3 --retry-delay 1 -o "$dest" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$dest" "$url"
+  else
+    die "need curl or wget"
+  fi
+}
+
+verify_checksum() {
+  local archive="$1"
+  local filename="$2"
+  local sums_url sums tmp
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || return 0
+  sums_url="$(github_download_url SHA256SUMS)"
+  tmp="$(mktemp)"
+  if ! download "$sums_url" "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    warn "No SHA256SUMS for this release; skipping checksum"
+    return 0
+  fi
+  sums="$(grep -E "[[:space:]]${filename}$" "$tmp" || true)"
+  rm -f "$tmp"
+  [[ -n "$sums" ]] || { warn "SHA256SUMS has no entry for ${filename}"; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s\n' "$sums" | (cd "$(dirname "$archive")" && sha256sum -c -)
+  else
+    local expected actual
+    expected="$(printf '%s\n' "$sums" | awk '{print $1}')"
+    actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+    [[ "$expected" == "$actual" ]] || die "checksum mismatch for ${filename}"
+  fi
+}
+
+extract_archive() {
+  local archive="$1"
+  local dest="$2"
+  mkdir -p "$dest"
+  case "$archive" in
+    *.tar.gz|*.tgz) tar -xzf "$archive" -C "$dest" ;;
+    *.zip)
+      if command -v unzip >/dev/null 2>&1; then
+        unzip -qo "$archive" -d "$dest"
+      else
+        python3 - "$archive" "$dest" <<'PY'
+import sys, zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+      fi
+      ;;
+    *) die "unknown archive type: $archive" ;;
+  esac
+}
+
+find_payload() {
+  local root="$1"
+  local name="$2"
+  local found
+  found="$(find "$root" -type f \( -name "$name" -o -name "${name}.exe" \) -print | head -n 1 || true)"
+  [[ -n "$found" ]] || die "archive is missing ${name}"
+  printf '%s\n' "$found"
+}
+
+add_to_path() {
+  local install_dir="$1"
+  if [[ "${CC_SKIP_PATH:-}" == "1" ]]; then
+    return 0
+  fi
+  if [[ ":${PATH}:" == *":${install_dir}:"* ]]; then
+    return 0
+  fi
+  if [[ -n "${GITHUB_PATH:-}" ]]; then
+    printf '%s\n' "$install_dir" >> "$GITHUB_PATH"
+  fi
+
+  local shell_name config_file
+  shell_name="$(basename "${SHELL:-bash}")"
+  case "$shell_name" in
+    fish) config_file="${HOME}/.config/fish/config.fish" ;;
+    zsh) config_file="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    *) config_file="${HOME}/.bashrc" ;;
+  esac
+
+  local line
+  if [[ "$shell_name" == fish ]]; then
+    line="fish_add_path ${install_dir}"
+  else
+    line="export PATH=\"${install_dir}:\$PATH\""
+  fi
+
+  if [[ -f "$config_file" ]] && grep -Fqs "$install_dir" "$config_file"; then
+    return 0
+  fi
+
+  if [[ -w "${config_file%/*}" ]] || [[ -w "$config_file" ]]; then
+    mkdir -p "$(dirname "$config_file")"
+    {
+      printf '\n# cc (Cursor Composer)\n'
+      printf '%s\n' "$line"
+    } >> "$config_file"
+    info "Added ${install_dir} to PATH in ${config_file}"
+  else
+    warn "Add this to your shell profile:"
+    warn "  ${line}"
+  fi
+}
+
+main() {
+  local filename archive install_dir work
+  filename="$(detect_filename)"
+  install_dir="$(resolve_install_dir)"
+  [[ -n "$install_dir" ]] || die "could not resolve install directory"
+  mkdir -p "$install_dir"
+  work="$(mktemp -d)"
+  trap 'rm -rf "'"$work"'"' EXIT
+
+  if [[ -n "${CC_ARCHIVE:-}" ]]; then
+    archive="$CC_ARCHIVE"
+    [[ -f "$archive" ]] || die "CC_ARCHIVE not found: $archive"
+    info "Installing from ${archive}"
+  else
+    need_cmd curl
+    local url
+    url="$(github_download_url "$filename")"
+    archive="${work}/${filename}"
+    info "Downloading ${url}"
+    download "$url" "$archive" || die "Download failed. Create a GitHub release, or build from source: zig build"
+    verify_checksum "$archive" "$filename"
+  fi
+
+  extract_archive "$archive" "${work}/unpacked"
+  local cc_src bridge_src
+  cc_src="$(find_payload "${work}/unpacked" cc)"
+  bridge_src="$(find_payload "${work}/unpacked" cursor-sdk-bridge)"
+
+  local cc_name bridge_name
+  cc_name="$(basename "$cc_src")"
+  bridge_name="$(basename "$bridge_src")"
+  install -m 0755 "$cc_src" "${install_dir}/${cc_name}"
+  install -m 0755 "$bridge_src" "${install_dir}/${bridge_name}"
+
+  add_to_path "$install_dir"
+
+  info "Installed ${install_dir}/${cc_name}"
+  info "Installed ${install_dir}/${bridge_name}"
+  printf '\nSet CURSOR_API_KEY, then run:\n  cc\n'
+  if [[ ":${PATH}:" != *":${install_dir}:"* ]]; then
+    printf 'If the command is not found, open a new shell or:\n  export PATH="%s:$PATH"\n' "$install_dir"
+  fi
+}
+
+main "$@"

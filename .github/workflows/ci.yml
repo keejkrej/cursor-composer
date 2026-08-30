@@ -40,3 +40,20 @@ jobs:
             ./zig-out/bin/cc ask "hello" | tee /tmp/ask-mock.txt
           grep -q "hello from mock" /tmp/ask-mock.txt
           kill "$(cat /tmp/mock-bridge.pid)" || true
+      - name: Installer syntax
+        run: bash -n install && chmod +x install scripts/package-release.sh
+      - name: Installer dry-run
+        run: |
+          mkdir -p /tmp/cc-pkg
+          printf '%s\n' '#!/bin/sh' 'echo cc' > /tmp/cc-pkg/cc
+          printf '%s\n' '#!/bin/sh' 'echo bridge' > /tmp/cc-pkg/cursor-sdk-bridge
+          chmod +x /tmp/cc-pkg/cc /tmp/cc-pkg/cursor-sdk-bridge
+          tar -czf /tmp/cc-linux-x64.tar.gz -C /tmp/cc-pkg cc cursor-sdk-bridge
+          CC_ARCHIVE=/tmp/cc-linux-x64.tar.gz \
+            CC_INSTALL_DIR=/tmp/cc-inst \
+            CC_SKIP_PATH=1 \
+            ./install
+          test -x /tmp/cc-inst/cc
+          test -x /tmp/cc-inst/cursor-sdk-bridge
+      - name: Release target smoke
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl -Dcpu=baseline

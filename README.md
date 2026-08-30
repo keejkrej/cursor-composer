@@ -9,15 +9,37 @@ FX-style terminal UI for Cursor agents. The installable binary is **`cc`** (Curs
 └──────────────────────┘                         └────────────────────┘           └────────────┘
 ```
 
+## Install
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://github.com/keejkrej/cursor-composer/releases/latest/download/install | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/keejkrej/cursor-composer/releases/latest/download/install.ps1 | iex
+```
+
+That installs `cc` and `cursor-sdk-bridge` into `~/.cc/bin` (or `%USERPROFILE%\.cc\bin`). Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.1.0`. Then:
+
+```bash
+export CURSOR_API_KEY="your-key"
+cc
+```
+
+GitHub publishes archives for linux-x64/arm64, darwin-x64/arm64, and windows-x64/arm64 on each `v*` tag (or via the Release workflow dispatch). After a release exists, the installers above download it.
+
 ## Requirements
 
-- Zig 0.16.0+
 - A Cursor user or service-account API key (`CURSOR_API_KEY`)
-- The standalone `cursor-sdk-bridge` binary (see below)
+- The standalone `cursor-sdk-bridge` binary (bundled by the installer)
 
 Team Admin API keys are not supported by the bridge.
 
-## Install and run
+## Build from source
 
 ```bash
 git clone https://github.com/keejkrej/cursor-composer.git
@@ -27,6 +49,8 @@ export CURSOR_API_KEY="your-key"
 zig build -Doptimize=ReleaseSafe
 ./zig-out/bin/cc
 ```
+
+Requires Zig 0.16.0+.
 
 The current directory is the workspace passed to Cursor as `options.local.cwd`. Enter a prompt, or `/help`. While a run is active, Enter queues a follow-up (fx behavior). The model default is `composer-2.5`; override with `CURSOR_MODEL` or `/model`.
 
@@ -78,7 +102,7 @@ Environment:
 | `CURSOR_API_KEY` | Cursor API key (also accepted as `AI_GATEWAY_API_KEY` so the fx auth gate unlocks) |
 | `CURSOR_MODEL` | Model id (default `composer-2.5`) |
 | `CURSOR_AGENT_ID` | Resume this Cursor agent instead of creating one |
-| `CURSOR_SDK_BRIDGE_BIN` | Path to `cursor-sdk-bridge` |
+| `CURSOR_SDK_BRIDGE_BIN` | Path to `cursor-sdk-bridge` (otherwise `cc` looks next to itself, then `~/.cc/bin`, then `cursor-sdk-bridge/bin/cursor-sdk-bridge`) |
 | `CURSOR_SDK_BRIDGE_URL` + `CURSOR_SDK_BRIDGE_TOKEN` | Attach to an already-running bridge |
 
 ## Build

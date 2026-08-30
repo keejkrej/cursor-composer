@@ -2,6 +2,7 @@ const std = @import("std");
 const io_mod = @import("../core/shared/io.zig");
 const bridge_mod = @import("bridge.zig");
 const client_mod = @import("client.zig");
+const paths = @import("paths.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -20,13 +21,48 @@ var model_owned: ?[]u8 = null;
 var pending_resume_owned: ?[]u8 = null;
 var resume_last: bool = false;
 var alloc_ref: Allocator = std.heap.c_allocator;
+var bridge_bin_owned: ?[]u8 = null;
 
 pub fn resolveApiKey() ?[]const u8 {
     return io_mod.getenv("CURSOR_API_KEY") orelse io_mod.getenv("AI_GATEWAY_API_KEY");
 }
 
 pub fn resolveBridgeBin() []const u8 {
-    return io_mod.getenv("CURSOR_SDK_BRIDGE_BIN") orelse "cursor-sdk-bridge/bin/cursor-sdk-bridge";
+    if (io_mod.getenv("CURSOR_SDK_BRIDGE_BIN")) |explicit| {
+        if (explicit.len > 0) return explicit;
+    }
+    if (bridge_bin_owned) |cached| return cached;
+    if (findBridgeBin(alloc_ref)) |found| {
+        bridge_bin_owned = found;
+        return found;
+    } else |_| {}
+    return paths.default_relpath;
+}
+
+fn findBridgeBin(alloc: Allocator) ![]u8 {
+    if (paths.exeDir(alloc)) |dir| {
+        defer alloc.free(dir);
+        const siblings = try paths.siblingBridgeCandidates(alloc, dir);
+        defer {
+            for (siblings) |item| alloc.free(item);
+            alloc.free(siblings);
+        }
+        if (paths.firstExistingOwned(siblings)) |hit| return try alloc.dupe(u8, hit);
+    }
+    if (io_mod.getenv("HOME")) |home| {
+        if (home.len > 0) {
+            const homes = try paths.homeBridgeCandidates(alloc, home);
+            defer {
+                for (homes) |item| alloc.free(item);
+                alloc.free(homes);
+            }
+            if (paths.firstExistingOwned(homes)) |hit| return try alloc.dupe(u8, hit);
+        }
+    }
+    if (paths.pathExists(paths.default_relpath)) {
+        return try alloc.dupe(u8, paths.default_relpath);
+    }
+    return error.BridgeBinaryMissing;
 }
 
 pub fn resolveModel(preferred: []const u8) []const u8 {
@@ -250,9 +286,11 @@ pub fn shutdown() void {
     if (workspace_owned) |cwd| alloc_ref.free(cwd);
     if (api_key_owned) |key| alloc_ref.free(key);
     if (model_owned) |model| alloc_ref.free(model);
+    if (bridge_bin_owned) |bin| alloc_ref.free(bin);
     workspace_owned = null;
     api_key_owned = null;
     model_owned = null;
+    bridge_bin_owned = null;
     client_mem = null;
     started = false;
     resume_last = false;
