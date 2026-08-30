@@ -16,7 +16,11 @@ case "$TARGET" in
   x86_64-macos*) BRIDGE_OS=darwin; BRIDGE_ARCH=x64 ;;
   aarch64-macos*) BRIDGE_OS=darwin; BRIDGE_ARCH=arm64 ;;
   x86_64-windows*) BRIDGE_OS=win32; BRIDGE_ARCH=x64 ;;
-  aarch64-windows*) BRIDGE_OS=win32; BRIDGE_ARCH=arm64 ;;
+  aarch64-windows*)
+    echo "cursor-sdk-bridge v${BRIDGE_VERSION} has no win32-arm64 asset (see cursor/sdk-bridge releases)." >&2
+    echo "Ship cc-windows-x64; ARM64 Windows can run that zip under x64 emulation." >&2
+    exit 1
+    ;;
   *)
     echo "unsupported zig target: $TARGET" >&2
     exit 1

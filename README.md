@@ -30,7 +30,7 @@ export CURSOR_API_KEY="your-key"
 cc
 ```
 
-GitHub publishes archives for linux-x64/arm64, darwin-x64/arm64, and windows-x64/arm64 on each `v*` tag (or via the Release workflow dispatch). After a release exists, the installer above downloads it.
+GitHub publishes archives for linux-x64/arm64, darwin-x64/arm64, and windows-x64 on each `v*` tag (or via the Release workflow dispatch). ARM64 Windows installs the x64 zip until Cursor publishes a win32-arm64 SDK bridge. After a release exists, the installer above downloads it.
 
 ## Requirements
 

@@ -24,7 +24,10 @@ function Get-ArchName {
     if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
     switch ($arch) {
         "AMD64" { return "x64" }
-        "ARM64" { return "arm64" }
+        "ARM64" {
+            Write-Host "Using the Windows x64 build (Cursor does not publish a win32-arm64 SDK bridge yet)."
+            return "x64"
+        }
         default { throw "unsupported architecture: $arch" }
     }
 }

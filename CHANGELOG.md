@@ -6,7 +6,7 @@
 
 ### New Features
 
-- **Windows**: `cc.exe` compiles and ships for x64 and arm64 on Zig 0.16. Install with `irm …/install.ps1 | iex`.
+- **Windows**: `cc.exe` compiles on Zig 0.16 and ships as `cc-windows-x64.zip`. ARM64 Windows uses that x64 build (Cursor’s SDK bridge has no win32-arm64 asset yet). Install with `irm …/install.ps1 | iex`.
 - **AskQuestion**: Cursor `AskQuestion` / `ask_user_question` runs through the fx question picker via a loopback `CallCustomTool` callback.
 - **Tool transcript**: Cursor built-in names (`Read`, `Write`, `Shell`, …) map onto fx activity kinds.
 

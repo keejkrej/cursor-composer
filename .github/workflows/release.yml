@@ -42,9 +42,8 @@ jobs:
           - target: x86_64-windows
             asset: cc-windows-x64
             archive: zip
-          - target: aarch64-windows
-            asset: cc-windows-arm64
-            archive: zip
+          # cursor-sdk-bridge v1.0.30 has no win32-arm64 build. ARM64 Windows
+          # installs the x64 zip (WOW64/x64 emulation).
     steps:
       - uses: actions/checkout@v4
       - name: Setup Zig
