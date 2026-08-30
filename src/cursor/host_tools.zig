@@ -5,10 +5,13 @@ const ask_schema = @import("../tools/agent/ask_user_question_schema.zig");
 
 const Allocator = std.mem.Allocator;
 
+/// Cursor-facing name for the converted fx `ask_user_question` schema.
+pub const advertised_name = "AskQuestion";
+
 /// Tools the host executes. Cursor built-ins (Read/Write/Shell/…) stay in the
-/// bridge; `ask_user_question` is advertised so the model can reach the fx TUI.
+/// bridge; `AskQuestion` is advertised so the model can reach the fx TUI.
 pub const advertised = [_][]const u8{
-    ask_schema.name,
+    advertised_name,
 };
 
 pub fn isQuestionTool(name: []const u8) bool {
@@ -46,13 +49,17 @@ pub fn classifyActivity(name: []const u8) types.ToolActivityKind {
 }
 
 /// Converts an fx `FunctionSchema` into one `LocalAgentOptions.custom_tools` entry.
-pub fn customToolDefinitionJson(alloc: Allocator, schema: model_tool_schema.FunctionSchema) ![]u8 {
+pub fn customToolDefinitionJson(
+    alloc: Allocator,
+    name: []const u8,
+    schema: model_tool_schema.FunctionSchema,
+) ![]u8 {
     const input_schema = try model_tool_schema.objectSchemaJsonAlloc(alloc, schema.input_schema);
     defer alloc.free(input_schema);
 
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
-    try std.json.Stringify.value(schema.name, .{}, &out.writer);
+    try std.json.Stringify.value(name, .{}, &out.writer);
     try out.writer.writeAll(":{\"description\":");
     try std.json.Stringify.value(schema.description, .{}, &out.writer);
     try out.writer.writeAll(",\"inputSchema\":");
@@ -63,7 +70,7 @@ pub fn customToolDefinitionJson(alloc: Allocator, schema: model_tool_schema.Func
 
 /// JSON object for `LocalAgentOptions.custom_tools`.
 pub fn customToolsJson(alloc: Allocator) ![]u8 {
-    const entry = try customToolDefinitionJson(alloc, ask_schema.function_schema);
+    const entry = try customToolDefinitionJson(alloc, advertised_name, ask_schema.function_schema);
     defer alloc.free(entry);
 
     var out: std.Io.Writer.Allocating = .init(alloc);
@@ -193,16 +200,16 @@ test "custom tools JSON converts the fx ask_user_question schema" {
     defer std.testing.allocator.free(expected_schema);
 
     try std.testing.expectEqual(@as(usize, 1), advertised.len);
-    try std.testing.expectEqualStrings(ask_schema.name, advertised[0]);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"AskQuestion\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"ask_user_question\"") != null);
+    try std.testing.expectEqualStrings(advertised_name, advertised[0]);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"AskQuestion\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ask_user_question\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, expected_schema) != null);
     try std.testing.expect(std.mem.indexOf(u8, json, ask_schema.description) != null);
     {
         const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json, .{});
         defer parsed.deinit();
         try std.testing.expectEqual(@as(usize, 1), parsed.value.object.count());
-        const tool = parsed.value.object.get("ask_user_question").?;
+        const tool = parsed.value.object.get("AskQuestion").?;
         try std.testing.expectEqualStrings(ask_schema.description, tool.object.get("description").?.string);
     }
 }

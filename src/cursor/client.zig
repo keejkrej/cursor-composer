@@ -198,8 +198,8 @@ test "create and resume agent JSON include customTools" {
     const created = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", null, true);
     defer alloc.free(created);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"customTools\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, created, "\"ask_user_question\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, created, "\"AskQuestion\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"AskQuestion\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"ask_user_question\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"agentId\"") == null);
     {
         const parsed = try std.json.parseFromSlice(std.json.Value, alloc, created, .{});
