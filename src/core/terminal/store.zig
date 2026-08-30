@@ -11,6 +11,7 @@ const background_process_provider = @import(
 );
 const profile_paths = @import("../shared/profile_paths.zig");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const types = @import("../shared/types.zig");
 
@@ -460,7 +461,7 @@ pub const Record = struct {
             return error.InvalidTerminalRecord;
         }
         if (self.takeover_owner_pid) |pid| {
-            _ = std.fmt.parseInt(std.posix.pid_t, pid, 10) catch
+            _ = os_compat.parsePidText(pid) orelse
                 return error.InvalidTerminalRecord;
             _ = process_supervisor.ProcessInstanceToken.parse(
                 self.takeover_owner_process_token.?,

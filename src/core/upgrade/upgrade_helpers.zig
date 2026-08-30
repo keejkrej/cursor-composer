@@ -12,10 +12,12 @@ const checksum_max_bytes: usize = 4096;
 const Channel = update_target.Channel;
 const Target = update_target.Target;
 
+const os_compat = @import("../shared/os_compat.zig");
+
 fn setRecvTimeout(conn: *std.http.Client.Connection) void {
     const sock = conn.stream_writer.stream.socket.handle;
     const timeout = std.posix.timeval{ .sec = recv_timeout_sec, .usec = 0 };
-    std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
+    os_compat.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
 }
 
 pub const cdn_base = "https://releases.fx.sh";
@@ -53,6 +55,7 @@ fn platformFromTarget() ?[]const u8 {
     const os: ?[]const u8 = switch (builtin.os.tag) {
         .macos => "macos",
         .linux => "linux",
+        .windows => "windows",
         else => null,
     };
     const arch: ?[]const u8 = switch (builtin.cpu.arch) {

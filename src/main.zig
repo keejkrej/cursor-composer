@@ -2,8 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const io_mod = @import("core/shared/io.zig");
+const os_compat = @import("core/shared/os_compat.zig");
 
 pub const version = "0.0.7";
+
+/// Zig 0.16 Windows `File.Permissions` has no `fromMode`/`toMode`.
+pub const std_options_FilePermissions = @import("file_permissions.zig").Permissions;
 
 const app_lifecycle = @import("core/app/app_lifecycle.zig");
 const provider_runtime = @import("core/app/provider_runtime.zig");
@@ -3183,13 +3187,28 @@ fn rawArgs(c_argc: c_int, c_argv: [*][*:0]c_char) []const [*:0]const u8 {
 }
 
 fn argsFromRaw(raw_args: []const [*:0]const u8) std.process.Args {
+    if (comptime builtin.os.tag == .windows) {
+        // Windows Args.vector is the process command line in WTF-16.
+        const cmd = std.os.windows.peb().ProcessParameters.CommandLine;
+        if (cmd.Buffer) |buf| {
+            return .{ .vector = buf[0 .. cmd.Length / 2] };
+        }
+        return .{ .vector = &.{} };
+    }
     return .{ .vector = raw_args };
 }
 
 fn environBlockFromRaw(raw_env: RawEnviron) std.process.Environ.Block {
+    if (comptime builtin.os.tag == .windows) {
+        return windowsEnvironBlock(raw_env);
+    }
     var count: usize = 0;
     while (raw_env[count] != null) : (count += 1) {}
     return .{ .slice = raw_env[0..count :null] };
+}
+
+fn windowsEnvironBlock(_: RawEnviron) std.process.Environ.Block {
+    return .global;
 }
 
 fn shouldRunBenchmarkNoArgRaw(raw_args: []const [*:0]const u8, raw_env: RawEnviron) bool {
@@ -3242,12 +3261,16 @@ fn topLevelHelpStyleForValues(is_terminal: bool, no_color: bool, dumb_terminal: 
 }
 
 fn stdoutIsTerminal() bool {
-    if (comptime builtin.os.tag == .windows or !builtin.link_libc) return false;
-    return std.c.isatty(std.posix.STDOUT_FILENO) != 0;
+    if (comptime !builtin.link_libc and builtin.os.tag != .windows) return false;
+    return os_compat.isTty(os_compat.stdoutHandle());
 }
 
 fn stdoutTerminalColumns() ?usize {
-    if (comptime builtin.os.tag == .windows or !builtin.link_libc) return null;
+    if (comptime builtin.os.tag == .windows) {
+        const size = os_compat.queryConsoleSize() catch return null;
+        return if (size.cols == 0) null else size.cols;
+    }
+    if (comptime !builtin.link_libc) return null;
 
     var ws: std.posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
     const req: c_int = @intCast(std.c.T.IOCGWINSZ);
@@ -3597,10 +3620,20 @@ fn handleSigWinchWeb() callconv(.c) void {
     resize_interlock.noteResizeSignal();
 }
 
+fn handleSigWinchFallback(_: c_int) callconv(.c) void {
+    resize_interlock.noteResizeSignal();
+}
+
+const winch_handlers = if (shell_runtime.supports_resize_signal) struct {
+    const handler: app_lifecycle.ResizeHandler = handleSigWinchNative;
+} else struct {
+    const handler: app_lifecycle.ResizeHandler = handleSigWinchFallback;
+};
+
 const handle_sigwinch: app_lifecycle.ResizeHandler = if (host_target.is_wasm)
     handleSigWinchWeb
 else
-    handleSigWinchNative;
+    winch_handlers.handler;
 
 test "interactive startup does not begin with synthetic resize pending" {
     try std.testing.expect(!resize_interlock.resizePending());

@@ -220,6 +220,7 @@ fn openExistingRegularFileWithPolicy(
         errdefer file.close(getIo());
         const stat = try file.stat(getIo());
         try verifyOpenedRegularFileWithPolicy(stat, policy);
+        if (false) return error.FileControlFailed;
         return file;
     }
 
@@ -275,33 +276,44 @@ fn verifyOpenedRegularFileWithPolicy(stat: std.Io.File.Stat, policy: RegularFile
 }
 
 fn makeFileBlocking(file: *std.Io.File) !void {
-    const current = while (true) {
-        const rc = std.posix.system.fcntl(
-            file.handle,
-            std.posix.F.GETFL,
-            @as(usize, 0),
-        );
-        switch (std.posix.errno(rc)) {
-            .SUCCESS => break @as(usize, @intCast(rc)),
-            .INTR => continue,
-            else => return error.FileControlFailed,
-        }
-    };
-    const nonblock = @as(usize, 1) << @bitOffsetOf(std.posix.O, "NONBLOCK");
-    while (true) {
-        const rc = std.posix.system.fcntl(
-            file.handle,
-            std.posix.F.SETFL,
-            current & ~nonblock,
-        );
-        switch (std.posix.errno(rc)) {
-            .SUCCESS => break,
-            .INTR => continue,
-            else => return error.FileControlFailed,
-        }
-    }
-    file.flags.nonblocking = false;
+    return posix_file_flags.run(file);
 }
+
+const posix_file_flags = if (builtin.os.tag == .windows) struct {
+    fn run(file: *std.Io.File) !void {
+        file.flags.nonblocking = false;
+        if (false) return error.FileControlFailed;
+    }
+} else struct {
+    fn run(file: *std.Io.File) !void {
+        const current = while (true) {
+            const rc = std.posix.system.fcntl(
+                file.handle,
+                std.posix.F.GETFL,
+                @as(usize, 0),
+            );
+            switch (std.posix.errno(rc)) {
+                .SUCCESS => break @as(usize, @intCast(rc)),
+                .INTR => continue,
+                else => return error.FileControlFailed,
+            }
+        };
+        const nonblock = @as(usize, 1) << @bitOffsetOf(std.posix.O, "NONBLOCK");
+        while (true) {
+            const rc = std.posix.system.fcntl(
+                file.handle,
+                std.posix.F.SETFL,
+                current & ~nonblock,
+            );
+            switch (std.posix.errno(rc)) {
+                .SUCCESS => break,
+                .INTR => continue,
+                else => return error.FileControlFailed,
+            }
+        }
+        file.flags.nonblocking = false;
+    }
+};
 
 test "read-only regular files remain valid when atomic replacement unlinks the descriptor" {
     if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
@@ -585,7 +597,10 @@ fn verifyPrivateDirectory(dir: std.Io.Dir) !void {
 /// The handle must come from an `openDir` that requested iteration. Linux returns an
 /// `O_PATH` descriptor otherwise, and `fsync` rejects those with `EBADF`.
 pub fn syncVerifiedDir(dir: std.Io.Dir) !void {
-    if (comptime builtin.os.tag == .windows) return error.OperationUnsupported;
+    if (comptime builtin.os.tag == .windows) {
+        if (false) return error.DirectorySyncFailed;
+        return error.OperationUnsupported;
+    }
     while (true) {
         const rc = std.c.fsync(dir.handle);
         if (rc == 0) return;
@@ -902,6 +917,9 @@ pub fn makeDirRecursive(path: []const u8) !void {
 }
 
 pub fn realpathAlloc(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
+    if (comptime builtin.os.tag == .windows) {
+        return windowsRealpathAlloc(alloc, path);
+    }
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path_z = try std.fmt.bufPrintZ(&buf, "{s}", .{path});
     var result_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -910,7 +928,29 @@ pub fn realpathAlloc(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
     return alloc.dupe(u8, resolved);
 }
 
+fn windowsRealpathAlloc(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
+    const zio = getIo();
+    if (std.Io.Dir.cwd().openFile(zio, path, .{})) |file| {
+        defer file.close(zio);
+        return handlePathAlloc(alloc, file.handle) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.FileNotFound,
+        };
+    } else |_| {}
+    if (std.Io.Dir.cwd().openDir(zio, path, .{ .iterate = true })) |dir| {
+        defer dir.close(zio);
+        return handlePathAlloc(alloc, dir.handle) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.FileNotFound,
+        };
+    } else |_| {}
+    return std.fs.path.resolve(alloc, &.{path});
+}
+
 fn handlePathAlloc(alloc: std.mem.Allocator, handle: std.Io.File.Handle) ![]u8 {
+    if (comptime builtin.os.tag == .windows) {
+        return @import("os_compat.zig").handlePathAlloc(alloc, handle);
+    }
     if (comptime builtin.os.tag == .macos or builtin.os.tag == .ios) {
         // F_GETPATH (macOS fcntl command 50): resolve filesystem path for an fd.
         var path_buf: [std.fs.max_path_bytes:0]u8 = undefined;
@@ -968,6 +1008,14 @@ pub fn dirRealpathAlloc(alloc: std.mem.Allocator, dir: std.Io.Dir, sub_path: []c
     } else if (comptime builtin.os.tag == .wasi) {
         if (std.fs.path.isAbsolute(sub_path)) return alloc.dupe(u8, sub_path);
         return std.fs.path.resolve(alloc, &.{sub_path});
+    } else if (comptime builtin.os.tag == .windows) {
+        const dir_path = handlePathAlloc(alloc, dir.handle) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.FileNotFound,
+        };
+        if (sub_path.len == 0 or std.mem.eql(u8, sub_path, ".")) return dir_path;
+        defer alloc.free(dir_path);
+        return std.fs.path.resolve(alloc, &.{ dir_path, sub_path });
     } else {
         @compileError("dirRealpathAlloc not implemented for this OS");
     }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const app_lifecycle = @import("../app/app_lifecycle.zig");
 const background_record_liveness = @import("../background/background_record_liveness.zig");
 const background_store = @import("../background/background_store.zig");
@@ -1854,8 +1855,8 @@ fn runPasteSetup(
 }
 
 fn setupTerminalAvailableDefault(_: ?*anyopaque) bool {
-    return std.c.isatty(std.posix.STDIN_FILENO) != 0 and
-        std.c.isatty(std.posix.STDERR_FILENO) != 0;
+    return os_compat.isTty(os_compat.stdinHandle()) and
+        os_compat.isTty(os_compat.stderrHandle());
 }
 
 fn readMaskedKeyDefault(
@@ -1874,7 +1875,7 @@ fn readMaskedKeyDefault(
 
     while (input.items.len < 8 * 1024) {
         var byte: [1]u8 = undefined;
-        if (try std.posix.read(std.posix.STDIN_FILENO, &byte) == 0) return error.SetupCancelled;
+        if (try os_compat.read(os_compat.stdinHandle(), &byte) == 0) return error.SetupCancelled;
         switch (byte[0]) {
             '\r', '\n' => {
                 if (input.items.len == 0) continue;
@@ -1901,18 +1902,35 @@ fn readMaskedKeyDefault(
     return error.SetupKeyTooLong;
 }
 
-const MaskedKeyRawMode = struct {
+const MaskedKeyRawMode = if (os_compat.is_windows) struct {
+    console: os_compat.ConsoleState = undefined,
+    active: bool = false,
+
+    fn enable() !@This() {
+        var self: @This() = .{};
+        self.console = try os_compat.captureConsole(os_compat.stdinHandle());
+        try os_compat.enableRawConsole(&self.console);
+        self.active = true;
+        return self;
+    }
+
+    fn disable(self: *@This()) void {
+        if (!self.active) return;
+        os_compat.restoreConsole(&self.console);
+        self.active = false;
+    }
+} else struct {
     original: std.posix.termios = undefined,
     active: bool = false,
 
-    fn enable() !MaskedKeyRawMode {
+    fn enable() !@This() {
         if (std.c.isatty(std.posix.STDIN_FILENO) == 0 or
             std.c.isatty(std.posix.STDERR_FILENO) == 0)
         {
             return error.NotATerminal;
         }
 
-        var self: MaskedKeyRawMode = .{};
+        var self: @This() = .{};
         self.original = try std.posix.tcgetattr(std.posix.STDIN_FILENO);
         var raw = self.original;
         raw.iflag.BRKINT = false;
@@ -1943,7 +1961,7 @@ const MaskedKeyRawMode = struct {
         return self;
     }
 
-    fn disable(self: *MaskedKeyRawMode) void {
+    fn disable(self: *@This()) void {
         if (!self.active) return;
         std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, self.original) catch {};
         self.active = false;

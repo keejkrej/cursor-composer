@@ -57,3 +57,5 @@ jobs:
           test -x /tmp/cc-inst/cursor-sdk-bridge
       - name: Release target smoke
         run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl -Dcpu=baseline
+      - name: Windows target smoke
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-windows -Dcpu=baseline

@@ -608,9 +608,10 @@ fn openExistingUsageFile(
     dir: std.Io.Dir,
     mode: std.Io.Dir.OpenFileOptions.Mode,
 ) !std.Io.File {
-    return io_mod.openExistingRegularFile(dir, usage_file, mode) catch |err| switch (err) {
-        error.FileControlFailed => error.UsageReadFailed,
-        else => err,
+    return io_mod.openExistingRegularFile(dir, usage_file, mode) catch |err| {
+        const as_any: anyerror = err;
+        if (as_any == error.FileControlFailed) return error.UsageReadFailed;
+        return err;
     };
 }
 

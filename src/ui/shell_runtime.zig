@@ -3,6 +3,7 @@ const activity_runtime = @import("../core/output/activity_runtime.zig");
 const builtin = @import("builtin");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const io_mod = @import("../core/shared/io.zig");
+const os_compat = @import("../core/shared/os_compat.zig");
 const types = @import("../core/shared/types.zig");
 const transcript_runtime = @import("transcript/runtime.zig");
 const frame_layout = @import("render_engine/frame_layout.zig");
@@ -37,8 +38,10 @@ extern "c" fn ptsname(fd: c_int) ?[*:0]u8;
 pub const supports_resize_signal = resize_runtime.supports_resize_signal;
 pub const ResizeHandler = if (builtin.os.tag == .wasi)
     *const fn () callconv(.c) void
+else if (supports_resize_signal)
+    std.posix.Sigaction.handler_fn
 else
-    std.posix.Sigaction.handler_fn;
+    *const fn (c_int) callconv(.c) void;
 pub const ResizeApprovalInterlock = resize_runtime.ResizeApprovalInterlock;
 pub const RedrawMode = resize_runtime.RedrawMode;
 
@@ -64,14 +67,16 @@ pub const AlternateScreenOwner = enum {
 };
 
 pub const TerminalState = struct {
-    stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO,
-    original_termios: std.posix.termios = undefined,
+    stdin_fd: std.posix.fd_t = if (os_compat.is_windows) undefined else std.posix.STDIN_FILENO,
+    original_termios: if (os_compat.has_termios) std.posix.termios else void = undefined,
+    windows_console: if (os_compat.is_windows) os_compat.ConsoleState else void = undefined,
     raw_enabled: bool = false,
     alternate_screen_owner: AlternateScreenOwner = .none,
     alternate_frame_layout: frame_layout.CommittedLayoutSnapshot = .{},
     alternate_mouse_tracking_active: bool = false,
     signal_handler_installed: bool = false,
-    old_winch_action: ?std.posix.Sigaction = null,
+    old_winch_action: if (supports_resize_signal) ?std.posix.Sigaction else void =
+        if (supports_resize_signal) null else {},
 
     pub fn fileApprovalScreenActive(self: TerminalState) bool {
         return self.alternate_screen_owner == .file_approval;
@@ -93,16 +98,23 @@ pub const TerminalState = struct {
         return self.alternate_screen_owner == .terminal_session;
     }
 
+    fn inputFd(self: TerminalState) std.posix.fd_t {
+        if (comptime os_compat.is_windows) {
+            return os_compat.stdinHandle();
+        }
+        return self.stdin_fd;
+    }
+
     pub fn ensureInteractive(self: TerminalState) !void {
         if (comptime builtin.os.tag == .wasi) return;
-        if (std.c.isatty(self.stdin_fd) == 0 or std.c.isatty(std.posix.STDOUT_FILENO) == 0) {
+        if (!os_compat.isTty(self.inputFd()) or !os_compat.isTty(os_compat.stdoutHandle())) {
             return error.NotATerminal;
         }
     }
 
     pub fn captureOriginalTermios(self: *TerminalState) !void {
         if (comptime builtin.os.tag == .wasi) return;
-        self.original_termios = try std.posix.tcgetattr(self.stdin_fd);
+        return termios_ops.capture(self);
     }
 
     pub fn enableRawMode(self: *TerminalState) !void {
@@ -110,64 +122,22 @@ pub const TerminalState = struct {
             self.raw_enabled = true;
             return;
         }
-        var raw = self.original_termios;
-
-        raw.iflag.BRKINT = false;
-        raw.iflag.IGNCR = false;
-        raw.iflag.ICRNL = false;
-        raw.iflag.INLCR = false;
-        raw.iflag.INPCK = false;
-        raw.iflag.ISTRIP = false;
-        raw.iflag.IXON = false;
-        raw.iflag.IXOFF = false;
-
-        raw.cflag.CSIZE = .CS8;
-
-        raw.lflag.ECHO = false;
-        raw.lflag.ICANON = false;
-        raw.lflag.IEXTEN = false;
-        raw.lflag.ISIG = false;
-
-        const vmin_idx = vminIndex();
-        const vtime_idx = vtimeIndex();
-        if (vmin_idx < raw.cc.len and vtime_idx < raw.cc.len) {
-            raw.cc[vmin_idx] = 1;
-            raw.cc[vtime_idx] = 0;
-        }
-
-        try std.posix.tcsetattr(self.stdin_fd, .NOW, raw);
+        try termios_ops.enableRaw(self);
         self.raw_enabled = true;
     }
 
     pub fn disableRawMode(self: *TerminalState) void {
         if (!self.raw_enabled) return;
-        if (comptime builtin.os.tag != .wasi) {
-            std.posix.tcsetattr(self.stdin_fd, .FLUSH, self.original_termios) catch {};
-        }
+        termios_ops.disableRaw(self);
         self.raw_enabled = false;
     }
 
     pub fn installResizeSignal(self: *TerminalState, handler: ResizeHandler) void {
-        if (!supports_resize_signal) return;
-
-        const act: std.posix.Sigaction = .{
-            .handler = .{ .handler = handler },
-            .mask = std.posix.sigemptyset(),
-            .flags = std.posix.SA.RESTART,
-        };
-
-        var old: std.posix.Sigaction = undefined;
-        std.posix.sigaction(std.posix.SIG.WINCH, &act, &old);
-        self.old_winch_action = old;
-        self.signal_handler_installed = true;
+        posix_resize.install(self, handler);
     }
 
     pub fn uninstallResizeSignal(self: *TerminalState) void {
-        if (!supports_resize_signal or !self.signal_handler_installed) return;
-        if (self.old_winch_action) |old| {
-            std.posix.sigaction(std.posix.SIG.WINCH, &old, null);
-        }
-        self.signal_handler_installed = false;
+        posix_resize.uninstall(self);
     }
 
     pub fn queryLayout(self: TerminalState, footer_rows: u16) !Layout {
@@ -253,7 +223,7 @@ pub const TerminalState = struct {
         if (comptime builtin.os.tag == .wasi) {
             return std.Io.File.stdin().readStreaming(io_mod.getIo(), &.{out});
         }
-        return std.posix.read(self.stdin_fd, out);
+        return os_compat.read(self.inputFd(), out);
     }
 
     pub fn pollInput(self: TerminalState, timeout_ms: i32) !PollResult {
@@ -264,20 +234,101 @@ pub const TerminalState = struct {
                 else => .{},
             };
         }
-        var fds = [_]std.posix.pollfd{.{
-            .fd = self.stdin_fd,
-            .events = std.posix.POLL.IN,
+        var fds = [_]os_compat.pollfd{.{
+            .fd = self.inputFd(),
+            .events = os_compat.POLL.IN,
             .revents = 0,
         }};
 
-        _ = try std.posix.poll(&fds, timeout_ms);
+        _ = try os_compat.poll(&fds, timeout_ms);
         const revents = fds[0].revents;
         return .{
-            .readable = (revents & std.posix.POLL.IN) != 0,
-            .hung_up = (revents & std.posix.POLL.HUP) != 0,
-            .has_error = (revents & std.posix.POLL.ERR) != 0,
+            .readable = (revents & os_compat.POLL.IN) != 0,
+            .hung_up = (revents & os_compat.POLL.HUP) != 0,
+            .has_error = (revents & os_compat.POLL.ERR) != 0,
         };
     }
+};
+
+const termios_ops = if (os_compat.is_windows) struct {
+    fn capture(self: *TerminalState) !void {
+        self.windows_console = try os_compat.captureConsole(os_compat.stdinHandle());
+    }
+
+    fn enableRaw(self: *TerminalState) !void {
+        try os_compat.enableRawConsole(&self.windows_console);
+    }
+
+    fn disableRaw(self: *TerminalState) void {
+        os_compat.restoreConsole(&self.windows_console);
+    }
+} else if (builtin.os.tag == .wasi) struct {
+    fn capture(_: *TerminalState) !void {}
+    fn enableRaw(_: *TerminalState) !void {}
+    fn disableRaw(_: *TerminalState) void {}
+} else struct {
+    fn capture(self: *TerminalState) !void {
+        self.original_termios = try std.posix.tcgetattr(self.stdin_fd);
+    }
+
+    fn enableRaw(self: *TerminalState) !void {
+        var raw = self.original_termios;
+
+        raw.iflag.BRKINT = false;
+        raw.iflag.IGNCR = false;
+        raw.iflag.ICRNL = false;
+        raw.iflag.INLCR = false;
+        raw.iflag.INPCK = false;
+        raw.iflag.ISTRIP = false;
+        raw.iflag.IXON = false;
+        raw.iflag.IXOFF = false;
+
+        raw.cflag.CSIZE = .CS8;
+
+        raw.lflag.ECHO = false;
+        raw.lflag.ICANON = false;
+        raw.lflag.IEXTEN = false;
+        raw.lflag.ISIG = false;
+
+        const vmin_idx = vminIndex();
+        const vtime_idx = vtimeIndex();
+        if (vmin_idx < raw.cc.len and vtime_idx < raw.cc.len) {
+            raw.cc[vmin_idx] = 1;
+            raw.cc[vtime_idx] = 0;
+        }
+
+        try std.posix.tcsetattr(self.stdin_fd, .NOW, raw);
+    }
+
+    fn disableRaw(self: *TerminalState) void {
+        std.posix.tcsetattr(self.stdin_fd, .FLUSH, self.original_termios) catch {};
+    }
+};
+
+const posix_resize = if (supports_resize_signal) struct {
+    fn install(self: *TerminalState, handler: ResizeHandler) void {
+        const act: std.posix.Sigaction = .{
+            .handler = .{ .handler = handler },
+            .mask = std.posix.sigemptyset(),
+            .flags = std.posix.SA.RESTART,
+        };
+
+        var old: std.posix.Sigaction = undefined;
+        std.posix.sigaction(std.posix.SIG.WINCH, &act, &old);
+        self.old_winch_action = old;
+        self.signal_handler_installed = true;
+    }
+
+    fn uninstall(self: *TerminalState) void {
+        if (!self.signal_handler_installed) return;
+        if (self.old_winch_action) |old| {
+            std.posix.sigaction(std.posix.SIG.WINCH, &old, null);
+        }
+        self.signal_handler_installed = false;
+    }
+} else struct {
+    fn install(_: *TerminalState, _: ResizeHandler) void {}
+    fn uninstall(_: *TerminalState) void {}
 };
 
 fn clearTmuxHistoryForPane(alloc: Allocator, pane: []const u8) void {
@@ -557,7 +608,7 @@ test "direct Apple Terminal uses RIS for terminal history resets" {
     try std.testing.expect(!historyResetUsesRisForValues("Ghostty", null));
 }
 
-const TestPty = struct {
+const TestPty = if (supports_test_pty) struct {
     master: std.posix.fd_t,
     slave: std.posix.fd_t,
 
@@ -584,99 +635,107 @@ const TestPty = struct {
         };
     }
 
-    fn close(self: TestPty) void {
+    fn close(self: @This()) void {
         closeTestFd(self.master);
         closeTestFd(self.slave);
     }
-};
+} else struct {};
 
 fn closeTestFd(fd: std.posix.fd_t) void {
     (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(io_mod.getIo());
 }
 
 test "enableRawMode preserves already queued input" {
-    if (!supports_test_pty) return error.SkipZigTest;
-
-    const pty = try TestPty.open();
-    defer pty.close();
-
-    var original = try std.posix.tcgetattr(pty.slave);
-    original.lflag.ECHO = false;
-    original.lflag.ICANON = false;
-    original.lflag.ISIG = false;
-    const vmin_idx = vminIndex();
-    const vtime_idx = vtimeIndex();
-    if (vmin_idx < original.cc.len and vtime_idx < original.cc.len) {
-        original.cc[vmin_idx] = 1;
-        original.cc[vtime_idx] = 0;
-    }
-    try std.posix.tcsetattr(pty.slave, .NOW, original);
-
-    var terminal = TerminalState{ .stdin_fd = pty.slave };
-    try terminal.captureOriginalTermios();
-
-    const queued = [_]u8{3};
-    try (std.Io.File{
-        .handle = pty.master,
-        .flags = .{ .nonblocking = false },
-    }).writeStreamingAll(io_mod.getIo(), &queued);
-
-    try terminal.enableRawMode();
-    defer terminal.disableRawMode();
-
-    var fds = [_]std.posix.pollfd{.{
-        .fd = pty.slave,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
-    try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&fds, 100));
-    try std.testing.expect((fds[0].revents & std.posix.POLL.IN) != 0);
-
-    var buf: [1]u8 = undefined;
-    try std.testing.expectEqual(@as(usize, 1), try std.posix.read(pty.slave, &buf));
-    try std.testing.expectEqual(@as(u8, 3), buf[0]);
+    if (comptime !supports_test_pty) return error.SkipZigTest;
+    return pty_cases.preservesQueuedInput();
 }
 
 test "enableRawMode preserves carriage return input" {
-    if (!supports_test_pty) return error.SkipZigTest;
-
-    const pty = try TestPty.open();
-    defer pty.close();
-
-    var original = try std.posix.tcgetattr(pty.slave);
-    original.iflag.IGNCR = true;
-    original.iflag.ICRNL = true;
-    original.iflag.INLCR = true;
-    try std.posix.tcsetattr(pty.slave, .NOW, original);
-
-    var terminal = TerminalState{ .stdin_fd = pty.slave };
-    try terminal.captureOriginalTermios();
-    try terminal.enableRawMode();
-    defer terminal.disableRawMode();
-
-    const raw = try std.posix.tcgetattr(pty.slave);
-    try std.testing.expect(!raw.iflag.IGNCR);
-    try std.testing.expect(!raw.iflag.ICRNL);
-    try std.testing.expect(!raw.iflag.INLCR);
-
-    const enter = [_]u8{'\r'};
-    try (std.Io.File{
-        .handle = pty.master,
-        .flags = .{ .nonblocking = false },
-    }).writeStreamingAll(io_mod.getIo(), &enter);
-
-    var fds = [_]std.posix.pollfd{.{
-        .fd = pty.slave,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
-    try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&fds, 100));
-    try std.testing.expect((fds[0].revents & std.posix.POLL.IN) != 0);
-
-    var buf: [1]u8 = undefined;
-    try std.testing.expectEqual(@as(usize, 1), try std.posix.read(pty.slave, &buf));
-    try std.testing.expectEqual(@as(u8, '\r'), buf[0]);
+    if (comptime !supports_test_pty) return error.SkipZigTest;
+    return pty_cases.preservesCarriageReturn();
 }
+
+const pty_cases = if (supports_test_pty) struct {
+    fn preservesQueuedInput() !void {
+        const pty = try TestPty.open();
+        defer pty.close();
+
+        var original = try std.posix.tcgetattr(pty.slave);
+        original.lflag.ECHO = false;
+        original.lflag.ICANON = false;
+        original.lflag.ISIG = false;
+        const vmin_idx = vminIndex();
+        const vtime_idx = vtimeIndex();
+        if (vmin_idx < original.cc.len and vtime_idx < original.cc.len) {
+            original.cc[vmin_idx] = 1;
+            original.cc[vtime_idx] = 0;
+        }
+        try std.posix.tcsetattr(pty.slave, .NOW, original);
+
+        var terminal = TerminalState{ .stdin_fd = pty.slave };
+        try terminal.captureOriginalTermios();
+
+        const queued = [_]u8{3};
+        try (std.Io.File{
+            .handle = pty.master,
+            .flags = .{ .nonblocking = false },
+        }).writeStreamingAll(io_mod.getIo(), &queued);
+
+        try terminal.enableRawMode();
+        defer terminal.disableRawMode();
+
+        var fds = [_]os_compat.pollfd{.{
+            .fd = pty.slave,
+            .events = os_compat.POLL.IN,
+            .revents = 0,
+        }};
+        try std.testing.expectEqual(@as(usize, 1), try os_compat.poll(&fds, 100));
+        try std.testing.expect((fds[0].revents & os_compat.POLL.IN) != 0);
+
+        var buf: [1]u8 = undefined;
+        try std.testing.expectEqual(@as(usize, 1), try os_compat.read(pty.slave, &buf));
+        try std.testing.expectEqual(@as(u8, 3), buf[0]);
+    }
+
+    fn preservesCarriageReturn() !void {
+        const pty = try TestPty.open();
+        defer pty.close();
+
+        var original = try std.posix.tcgetattr(pty.slave);
+        original.iflag.IGNCR = true;
+        original.iflag.ICRNL = true;
+        original.iflag.INLCR = true;
+        try std.posix.tcsetattr(pty.slave, .NOW, original);
+
+        var terminal = TerminalState{ .stdin_fd = pty.slave };
+        try terminal.captureOriginalTermios();
+        try terminal.enableRawMode();
+        defer terminal.disableRawMode();
+
+        const raw = try std.posix.tcgetattr(pty.slave);
+        try std.testing.expect(!raw.iflag.IGNCR);
+        try std.testing.expect(!raw.iflag.ICRNL);
+        try std.testing.expect(!raw.iflag.INLCR);
+
+        const enter = [_]u8{'\r'};
+        try (std.Io.File{
+            .handle = pty.master,
+            .flags = .{ .nonblocking = false },
+        }).writeStreamingAll(io_mod.getIo(), &enter);
+
+        var fds = [_]os_compat.pollfd{.{
+            .fd = pty.slave,
+            .events = os_compat.POLL.IN,
+            .revents = 0,
+        }};
+        try std.testing.expectEqual(@as(usize, 1), try os_compat.poll(&fds, 100));
+        try std.testing.expect((fds[0].revents & os_compat.POLL.IN) != 0);
+
+        var buf: [1]u8 = undefined;
+        try std.testing.expectEqual(@as(usize, 1), try os_compat.read(pty.slave, &buf));
+        try std.testing.expectEqual(@as(u8, '\r'), buf[0]);
+    }
+} else struct {};
 
 test "reconstructive paint re-emits a full transcript in order" {
     try @import("resize_tests.zig").testReconstructiveFullTranscriptReplay();

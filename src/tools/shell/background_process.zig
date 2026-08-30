@@ -1,5 +1,6 @@
 const std = @import("std");
 const io_mod = @import("../../core/shared/io.zig");
+const os_compat = @import("../../core/shared/os_compat.zig");
 const builtin = @import("builtin");
 const background_process_provider = @import(
     "../../core/execution/background_process_provider.zig",
@@ -85,7 +86,7 @@ fn spawnPrepared(
     };
 
     const child_id = child.id orelse return error.SpawnFailed;
-    const pid = try std.fmt.allocPrint(alloc, "{d}", .{child_id});
+    const pid = try std.fmt.allocPrint(alloc, "{d}", .{os_compat.formatPid(child_id)});
     var pid_owned = true;
     errdefer if (pid_owned) alloc.free(pid);
 
@@ -245,21 +246,32 @@ fn captureToken(
     alloc: Allocator,
     pid_text: []const u8,
 ) background_process_provider.ProviderError!process_supervisor.ProcessInstanceToken {
-    const pid = std.fmt.parseInt(std.posix.pid_t, pid_text, 10) catch
-        return error.InvalidPid;
-    return switch (builtin.os.tag) {
-        .linux => captureLinuxToken(alloc, pid) catch |err| switch (err) {
-            error.OutOfMemory => error.OutOfMemory,
-            error.ProcessNotFound => error.ProcessNotFound,
-            else => error.ProcessIdentityUnavailable,
-        },
-        .macos => captureMacOSToken(pid) catch |err| switch (err) {
-            error.ProcessNotFound => error.ProcessNotFound,
-            else => error.ProcessIdentityUnavailable,
-        },
-        else => error.ProcessIdentityUnsupported,
-    };
+    const pid_num = os_compat.parsePidText(pid_text) orelse return error.InvalidPid;
+    return posix_identity.capture(alloc, pid_num);
 }
+
+const posix_identity = if (builtin.os.tag == .linux or builtin.os.tag == .macos) struct {
+    fn capture(alloc: Allocator, pid_num: u64) background_process_provider.ProviderError!process_supervisor.ProcessInstanceToken {
+        const pid: std.posix.pid_t = std.math.cast(std.posix.pid_t, pid_num) orelse
+            return error.InvalidPid;
+        return switch (builtin.os.tag) {
+            .linux => captureLinuxToken(alloc, pid) catch |err| switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.ProcessNotFound => error.ProcessNotFound,
+                else => error.ProcessIdentityUnavailable,
+            },
+            .macos => captureMacOSToken(pid) catch |err| switch (err) {
+                error.ProcessNotFound => error.ProcessNotFound,
+                else => error.ProcessIdentityUnavailable,
+            },
+            else => error.ProcessIdentityUnsupported,
+        };
+    }
+} else struct {
+    fn capture(_: Allocator, _: u64) background_process_provider.ProviderError!process_supervisor.ProcessInstanceToken {
+        return error.ProcessIdentityUnsupported;
+    }
+};
 
 fn matchToken(
     context: ?*anyopaque,
@@ -482,12 +494,51 @@ fn signalProcess(
         },
     }
     if (!host.current().background_processes) return error.Unsupported;
-    const pid = std.fmt.parseInt(std.posix.pid_t, pid_text, 10) catch
-        return error.InvalidPid;
-    try signalPidTree(pid);
+    const pid_num = os_compat.parsePidText(pid_text) orelse return error.InvalidPid;
+    try posix_signal_tree.runFromNumber(pid_num);
 }
 
+const posix_signal_pid_tree = if (builtin.os.tag == .windows) struct {
+    fn run(_: std.posix.pid_t) std.posix.KillError!void {
+        return error.ProcessNotFound;
+    }
+} else struct {
+    fn run(root_pid: std.posix.pid_t) std.posix.KillError!void {
+        return posix_signal_tree.run(root_pid);
+    }
+};
+
 fn signalPidTree(root_pid: std.posix.pid_t) std.posix.KillError!void {
+    return posix_signal_pid_tree.run(root_pid);
+}
+
+const posix_signal_tree = if (builtin.os.tag == .windows) struct {
+    fn runFromNumber(root_pid: u64) std.posix.KillError!void {
+        const kernel32 = struct {
+            extern "kernel32" fn OpenProcess(
+                access: std.os.windows.DWORD,
+                inherit: std.os.windows.BOOL,
+                process_id: std.os.windows.DWORD,
+            ) callconv(.winapi) ?std.os.windows.HANDLE;
+            extern "kernel32" fn TerminateProcess(
+                process: std.os.windows.HANDLE,
+                code: std.os.windows.UINT,
+            ) callconv(.winapi) std.os.windows.BOOL;
+        };
+        const pid: std.os.windows.DWORD = std.math.cast(std.os.windows.DWORD, root_pid) orelse
+            return error.ProcessNotFound;
+        const handle = kernel32.OpenProcess(0x0001, .FALSE, pid) orelse // PROCESS_TERMINATE
+            return error.ProcessNotFound;
+        defer std.os.windows.CloseHandle(handle);
+        if (!kernel32.TerminateProcess(handle, 1).toBool()) return error.ProcessNotFound;
+    }
+} else struct {
+    fn runFromNumber(root_pid: u64) std.posix.KillError!void {
+        const pid: std.posix.pid_t = std.math.cast(std.posix.pid_t, root_pid) orelse
+            return error.ProcessNotFound;
+        return run(pid);
+    }
+    fn run(root_pid: std.posix.pid_t) std.posix.KillError!void {
     const descendants = collectDescendantPids(
         std.heap.page_allocator,
         root_pid,
@@ -533,7 +584,8 @@ fn signalPidTree(root_pid: std.posix.pid_t) std.posix.KillError!void {
             .{root_pid},
         );
     }
-}
+    }
+};
 
 fn sendSignal(
     pid: std.posix.pid_t,
@@ -750,12 +802,18 @@ const SpawnedBackgroundHandshake = struct {
         self: *SpawnedBackgroundHandshake,
         alloc: std.mem.Allocator,
     ) bool {
-        switch (builtin.os.tag) {
-            .windows, .wasi => return false,
-            else => {},
-        }
+        if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return false;
+        return posix_reap.tryReap(self, alloc);
+    }
+};
+
+const posix_reap = if (builtin.os.tag == .windows or builtin.os.tag == .wasi) struct {
+    fn tryReap(_: *SpawnedBackgroundHandshake, _: std.mem.Allocator) bool {
+        return false;
+    }
+} else struct {
+    fn tryReap(self: *SpawnedBackgroundHandshake, alloc: std.mem.Allocator) bool {
         const pid = self.child.id orelse return true;
-        // PID liveness includes zombies, so reap the child we directly own.
         if (std.c.waitpid(pid, null, std.c.W.NOHANG) != pid) return false;
         self.child.id = null;
         alloc.free(self.pid);

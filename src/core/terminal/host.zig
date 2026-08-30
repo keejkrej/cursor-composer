@@ -8,6 +8,7 @@ const native_session = @import("native_session.zig");
 const terminal_store = @import("store.zig");
 const host_capabilities = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const background_process_provider = @import(
@@ -198,7 +199,28 @@ pub const Paths = struct {
     endpoint_path: []u8,
 
     pub fn open(alloc: Allocator, home: []const u8) !Paths {
-        if (!isSupported()) return error.TerminalHostUnsupported;
+        return paths_open.run(alloc, home);
+    }
+
+    pub fn endpointDir(self: *Paths) *io_mod.VerifiedDir {
+        if (self.transport_dir) |*dir| return dir;
+        return &self.host_dir;
+    }
+
+    pub fn deinit(self: *Paths, alloc: Allocator) void {
+        alloc.free(self.endpoint_path);
+        alloc.free(self.transport_root_path);
+        alloc.free(self.authority_root_path);
+        if (self.transport_dir) |*dir| dir.close();
+        self.host_dir.close();
+        self.fx_dir.close();
+        self.home_dir.close();
+        self.* = undefined;
+    }
+};
+
+const paths_open = if (isSupported()) struct {
+    fn run(alloc: Allocator, home: []const u8) !Paths {
         var selection = try resolveEndpointSelection(
             alloc,
             builtin.os.tag,
@@ -243,21 +265,9 @@ pub const Paths = struct {
             .endpoint_path = selection.endpoint_path,
         };
     }
-
-    pub fn endpointDir(self: *Paths) *io_mod.VerifiedDir {
-        if (self.transport_dir) |*dir| return dir;
-        return &self.host_dir;
-    }
-
-    pub fn deinit(self: *Paths, alloc: Allocator) void {
-        alloc.free(self.endpoint_path);
-        alloc.free(self.transport_root_path);
-        alloc.free(self.authority_root_path);
-        if (self.transport_dir) |*dir| dir.close();
-        self.host_dir.close();
-        self.fx_dir.close();
-        self.home_dir.close();
-        self.* = undefined;
+} else struct {
+    fn run(_: Allocator, _: []const u8) !Paths {
+        return error.TerminalHostUnsupported;
     }
 };
 
@@ -480,7 +490,7 @@ fn runSupported(alloc: Allocator, config: Config) !void {
     debug_trace.logf(
         "terminal_host",
         "host listening pid={d} protocol={d}-{d}",
-        .{ std.c.getpid(), config.hello.range.minimum, config.hello.range.current },
+        .{ os_compat.currentPid(), config.hello.range.minimum, config.hello.range.current },
     );
 
     while (!state.stopping.load(.acquire)) {
@@ -672,13 +682,13 @@ fn idleOwner(state: *HostState) void {
 }
 
 fn listenerReady(handle: std.Io.net.Socket.Handle) !bool {
-    var poll_fds = [_]std.posix.pollfd{.{
+    var poll_fds = [_]os_compat.pollfd{.{
         .fd = handle,
-        .events = std.posix.POLL.IN,
+        .events = os_compat.POLL.IN,
         .revents = 0,
     }};
-    if (try std.posix.poll(&poll_fds, listener_poll_ms) == 0) return false;
-    if ((poll_fds[0].revents & std.posix.POLL.IN) != 0) return true;
+    if (try os_compat.poll(&poll_fds, listener_poll_ms) == 0) return false;
+    if ((poll_fds[0].revents & os_compat.POLL.IN) != 0) return true;
     return error.SocketNotListening;
 }
 
@@ -1227,7 +1237,7 @@ fn testCorrelationFromEnvironment(name: []const u8) ?u64 {
 fn applySocketTimeout(stream: std.Io.net.Stream) void {
     if (comptime !isSupported()) return;
     const timeout = std.posix.timeval{ .sec = 5, .usec = 0 };
-    std.posix.setsockopt(
+    os_compat.setsockopt(
         stream.socket.handle,
         std.posix.SOL.SOCKET,
         std.posix.SO.SNDTIMEO,
@@ -1310,12 +1320,13 @@ fn peerProcessOwner(
     } else return error.TerminalHostUnsupported;
 
     var pid_buffer: [32]u8 = undefined;
-    const pid_text = try std.fmt.bufPrint(&pid_buffer, "{d}", .{pid});
+    const pid_num = os_compat.formatPid(pid);
+    const pid_text = try std.fmt.bufPrint(&pid_buffer, "{d}", .{pid_num});
     const token = try process_provider.captureToken(
         alloc,
         pid_text,
     );
-    return contracts.ProcessOwner.init(@intCast(pid), token.view());
+    return contracts.ProcessOwner.init(@intCast(pid_num), token.view());
 }
 
 fn writeIdentity(
@@ -1326,7 +1337,7 @@ fn writeIdentity(
     instance: []const u8,
 ) !void {
     var pid_buffer: [32]u8 = undefined;
-    const pid = try std.fmt.bufPrint(&pid_buffer, "{d}", .{std.c.getpid()});
+    const pid = try std.fmt.bufPrint(&pid_buffer, "{d}", .{os_compat.currentPid()});
     const process_token = try process_provider.captureToken(
         alloc,
         pid,

@@ -3740,7 +3740,7 @@ const CompactTranscriptSourceCache = struct {
 };
 
 pub const TranscriptRuntime = struct {
-    stdout_file: std.Io.File = std.Io.File.stdout(),
+    stdout_file: std.Io.File = .{ .handle = undefined, .flags = .{ .nonblocking = false } },
     sync_updates_enabled: bool = true,
     history_reset_uses_ris: bool = false,
     layout: Layout = undefined,

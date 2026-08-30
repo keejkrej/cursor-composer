@@ -3,6 +3,7 @@ const runtime_profile = @import("../hosts/runtime_profile.zig");
 const app_permission_runtime = @import("app_permission_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const background_commands = @import("../background/background_commands.zig");
@@ -2238,7 +2239,7 @@ fn writeCurrentStateSummary(writer: *std.Io.Writer, app: anytype, alloc: std.mem
 }
 
 fn writeProcessSummary(writer: *std.Io.Writer, alloc: std.mem.Allocator) !void {
-    const pid = std.c.getpid();
+    const pid = os_compat.currentPid();
     try writer.print("process: pid={d}", .{pid});
     if (countOpenFileDescriptors()) |fd_count| try writer.print(" open_fds={d}", .{fd_count});
     try writer.writeByte('\n');
@@ -2278,7 +2279,7 @@ fn countOpenFileDescriptors() ?usize {
     return count;
 }
 
-fn processMemorySnapshot(alloc: std.mem.Allocator, pid: std.c.pid_t) ![]u8 {
+fn processMemorySnapshot(alloc: std.mem.Allocator, pid: u64) ![]u8 {
     const pid_text = try std.fmt.allocPrint(alloc, "{d}", .{pid});
     defer alloc.free(pid_text);
     const result = try std.process.run(alloc, io_mod.getIo(), .{

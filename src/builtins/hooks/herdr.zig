@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const io_mod = @import("../../core/shared/io.zig");
+const os_compat = @import("../../core/shared/os_compat.zig");
 const debug_trace = @import("../../core/shared/debug_trace.zig");
 const host_target = @import("../../core/hosts/target.zig");
 const jsonrpc = @import("../../acp/jsonrpc.zig");
@@ -181,7 +182,7 @@ pub const Client = struct {
 };
 
 fn applyResponseTimeout(stream: std.Io.net.Stream) void {
-    std.posix.setsockopt(
+    os_compat.setsockopt(
         stream.socket.handle,
         std.posix.SOL.SOCKET,
         std.posix.SO.RCVTIMEO,

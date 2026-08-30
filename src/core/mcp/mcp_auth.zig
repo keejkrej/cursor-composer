@@ -3,6 +3,7 @@ const host_target = @import("../hosts/target.zig");
 const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const operation_control = @import("operation_control.zig");
 const browser_callback = @import("../auth/browser_callback.zig");
 const secret = @import("../auth/secret.zig");
@@ -1265,9 +1266,9 @@ fn waitForInteractiveCallback(
     listener: *std.Io.net.Server,
     cancellation: operation_control.CancellationSources,
 ) !void {
-    var fds = [_]std.posix.pollfd{.{
+    var fds = [_]os_compat.pollfd{.{
         .fd = listener.socket.handle,
-        .events = std.posix.POLL.IN,
+        .events = os_compat.POLL.IN,
         .revents = 0,
     }};
     var remaining_ms = interactive_callback_timeout_ms;
@@ -1275,9 +1276,9 @@ fn waitForInteractiveCallback(
         try checkAuthorizationCancellation(cancellation);
         fds[0].revents = 0;
         const wait_ms = @min(remaining_ms, interactive_callback_poll_ms);
-        const ready = try std.posix.poll(&fds, wait_ms);
+        const ready = try os_compat.poll(&fds, wait_ms);
         if (ready > 0) {
-            if ((fds[0].revents & std.posix.POLL.IN) == 0) {
+            if ((fds[0].revents & os_compat.POLL.IN) == 0) {
                 return error.McpAuthorizationCallbackTimedOut;
             }
             try checkAuthorizationCancellation(cancellation);
@@ -1869,9 +1870,9 @@ fn validateJsonContentType(content_type: ?[]const u8) !void {
 
 fn setSocketTimeouts(socket: std.posix.socket_t, seconds: i64) void {
     if (comptime host_target.is_wasm) return;
-    const timeout = std.posix.timeval{ .sec = seconds, .usec = 0 };
+    const timeout = std.posix.timeval{ .sec = @intCast(seconds), .usec = 0 };
     const bytes = std.mem.asBytes(&timeout);
-    std.posix.setsockopt(
+    os_compat.setsockopt(
         socket,
         std.posix.SOL.SOCKET,
         std.posix.SO.RCVTIMEO,
@@ -1881,7 +1882,7 @@ fn setSocketTimeouts(socket: std.posix.socket_t, seconds: i64) void {
         "OAuth receive timeout setup failed err={s}",
         .{@errorName(err)},
     );
-    std.posix.setsockopt(
+    os_compat.setsockopt(
         socket,
         std.posix.SOL.SOCKET,
         std.posix.SO.SNDTIMEO,

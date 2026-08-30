@@ -39,8 +39,12 @@ jobs:
           - target: aarch64-macos
             asset: cc-darwin-arm64
             archive: tar.gz
-          # The vendored fx TUI does not compile for Windows on Zig 0.16.0
-          # (posix fd types, File.Permissions.toMode, and std.Io.File.stdout).
+          - target: x86_64-windows
+            asset: cc-windows-x64
+            archive: zip
+          - target: aarch64-windows
+            asset: cc-windows-arm64
+            archive: zip
     steps:
       - uses: actions/checkout@v4
       - name: Setup Zig
@@ -69,7 +73,7 @@ jobs:
         run: |
           chmod +x install
           cp install install.ps1 dist/
-          (cd dist && sha256sum cc-*.tar.gz install install.ps1 > SHA256SUMS)
+          (cd dist && sha256sum cc-*.tar.gz cc-*.zip install install.ps1 > SHA256SUMS)
           ls -la dist
       - name: Publish GitHub release
         env:

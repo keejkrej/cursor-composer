@@ -5,6 +5,7 @@ const secret = @import("../core/auth/secret.zig");
 const agent_stream_provider = @import("../core/agent/stream_provider.zig");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const io_mod = @import("../core/shared/io.zig");
+const os_compat = @import("../core/shared/os_compat.zig");
 const types = @import("../core/shared/types.zig");
 
 pub fn isRetryableGatewayError(err: anyerror) bool {
@@ -5852,7 +5853,7 @@ const LoopbackGatewayFixture = struct {
                     .onoff = 1,
                     .linger = 0,
                 };
-                try std.posix.setsockopt(
+                try os_compat.setsockopt(
                     stream.socket.handle,
                     std.posix.SOL.SOCKET,
                     std.posix.SO.LINGER,
@@ -5866,7 +5867,7 @@ const LoopbackGatewayFixture = struct {
             },
             .request_send_stall => {
                 const receive_buffer: c_int = 1024;
-                std.posix.setsockopt(
+                os_compat.setsockopt(
                     stream.socket.handle,
                     std.posix.SOL.SOCKET,
                     std.posix.SO.RCVBUF,
