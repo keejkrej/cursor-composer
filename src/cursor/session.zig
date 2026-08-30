@@ -6,7 +6,8 @@ const paths = @import("paths.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const default_model = "composer-2.5";
+// Cursor SDK / Agent API id for Cursor Grok 4.6 (not the CLI slug cursor-grok-4.6-*).
+pub const default_model = "grok-4.6";
 pub const persist_dir_name = ".cursor-composer";
 pub const persist_file_name = "last-agent";
 
@@ -296,15 +297,16 @@ pub fn shutdown() void {
     resume_last = false;
 }
 
-test "default model is composer-2.5" {
-    try std.testing.expectEqualStrings("composer-2.5", default_model);
+test "default model is grok-4.6" {
+    try std.testing.expectEqualStrings("grok-4.6", default_model);
 }
 
-test "FX gateway model ids fall back to composer-2.5" {
-    try std.testing.expectEqualStrings("composer-2.5", chooseModel("moonshotai/kimi-k3", null));
-    try std.testing.expectEqualStrings("composer-2.5", chooseModel("auto", null));
+test "FX gateway model ids fall back to grok-4.6" {
+    try std.testing.expectEqualStrings("grok-4.6", chooseModel("moonshotai/kimi-k3", null));
+    try std.testing.expectEqualStrings("grok-4.6", chooseModel("auto", null));
     try std.testing.expectEqualStrings("grok-4.6", chooseModel("grok-4.6", null));
     try std.testing.expectEqualStrings("composer-2.5", chooseModel("grok-4.6", "composer-2.5"));
+    try std.testing.expectEqualStrings("cursor-grok-4-6", chooseModel("auto", "cursor-grok-4-6"));
 }
 
 test "persist and resume last agent id without a bridge" {

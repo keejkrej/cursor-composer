@@ -52,7 +52,7 @@ zig build -Doptimize=ReleaseSafe
 
 Requires Zig 0.16.0+.
 
-The current directory is the workspace passed to Cursor as `options.local.cwd`. Enter a prompt, or `/help`. While a run is active, Enter queues a follow-up (fx behavior). The model default is `composer-2.5`; override with `CURSOR_MODEL` or `/model`.
+The current directory is the workspace passed to Cursor as `options.local.cwd`. Enter a prompt, or `/help`. While a run is active, Enter queues a follow-up (fx behavior). The model default is `grok-4.6` (Cursor Grok 4.6); override with `CURSOR_MODEL` or `/model`.
 
 Create vs resume:
 
@@ -100,7 +100,7 @@ Environment:
 | Variable | Meaning |
 | --- | --- |
 | `CURSOR_API_KEY` | Cursor API key (also accepted as `AI_GATEWAY_API_KEY` so the fx auth gate unlocks) |
-| `CURSOR_MODEL` | Model id (default `composer-2.5`) |
+| `CURSOR_MODEL` | Model id (default `grok-4.6`) |
 | `CURSOR_AGENT_ID` | Resume this Cursor agent instead of creating one |
 | `CURSOR_SDK_BRIDGE_BIN` | Path to `cursor-sdk-bridge` (otherwise `cc` looks next to itself, then `~/.cc/bin`, then `cursor-sdk-bridge/bin/cursor-sdk-bridge`) |
 | `CURSOR_SDK_BRIDGE_URL` + `CURSOR_SDK_BRIDGE_TOKEN` | Attach to an already-running bridge |
