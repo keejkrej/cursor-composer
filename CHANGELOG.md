@@ -1,5 +1,19 @@
 # fx
 
+## 0.2.0
+
+**cursor-composer: native Windows `cc.exe`, Cursor `AskQuestion` in the fx TUI, and quieter bridge lifecycle notices.**
+
+### New Features
+
+- **Windows**: `cc.exe` compiles and ships for x64 and arm64 on Zig 0.16. Install with `irm …/install.ps1 | iex`.
+- **AskQuestion**: Cursor `AskQuestion` / `ask_user_question` runs through the fx question picker via a loopback `CallCustomTool` callback.
+- **Tool transcript**: Cursor built-in names (`Read`, `Write`, `Shell`, …) map onto fx activity kinds.
+
+### Improvements
+
+- **Quiet turn start**: create/resume breadcrumbs and bare `RUNNING` / `FINISHED` status rows are hidden; real errors still surface.
+
 ## 0.0.7
 
 <!-- release:start -->
