@@ -4,7 +4,7 @@ const build_options = @import("build_options");
 const io_mod = @import("core/shared/io.zig");
 const os_compat = @import("core/shared/os_compat.zig");
 
-pub const version = "0.2.2";
+pub const version = "0.2.3";
 
 /// Zig 0.16 Windows `File.Permissions` has no `fromMode`/`toMode`.
 pub const std_options_FilePermissions = @import("file_permissions.zig").Permissions;
@@ -385,6 +385,10 @@ fn currentBuild() update_target.CurrentBuild {
         .version = version,
         .revision = build_options.git_commit,
     };
+}
+
+fn installCursorListModelsHook() void {
+    cursor_catalog.installListModels(cursor_session.listModelsJson);
 }
 
 const App = struct {
@@ -1901,6 +1905,7 @@ const App = struct {
     }
 
     pub fn fetchModelIds(self: *App) !std.ArrayList([]u8) {
+        installCursorListModelsHook();
         return AgentAppRuntime.fetchModelIds(
             self,
             if (comptime host_target.is_wasm)
@@ -1912,6 +1917,7 @@ const App = struct {
     }
 
     pub fn startModelCacheWarmup(self: *App) void {
+        installCursorListModelsHook();
         if (comptime host_profile.cooperative_agent) {
             if (self.auth.credentialNeedsRefresh()) {
                 debug_trace.logf("auth", "model_cache_warmup_deferred reason=credential_refresh_required", .{});

@@ -1,5 +1,13 @@
 # fx
 
+## 0.2.3
+
+**Load `/model` from Cursor ListModels instead of the six baked-in ids.**
+
+### Improvements
+
+- **Live model catalog**: `/model` now lists ids from `SdkCursorService.ListModels` through the SDK bridge, without creating an agent. The previous hardcoded six are used only when ListModels is unavailable.
+
 ## 0.2.2
 
 **Advertise Cursor's native `AskQuestion` schema; convert to the fx picker only inside `cc`.**

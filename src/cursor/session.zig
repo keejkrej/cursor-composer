@@ -99,24 +99,19 @@ pub const Session = struct {
     model: []const u8,
 };
 
-pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const u8, resume_id: ?[]const u8) !Session {
-    const zio = io_mod.getIo();
-    mutex.lockUncancelable(zio);
-    defer mutex.unlock(zio);
-    alloc_ref = alloc;
+fn currentCallback() ?bridge_mod.ToolCallback {
+    if (host_callback_url != null and host_callback_token != null)
+        return .{ .url = host_callback_url.?, .token = host_callback_token.? };
+    return null;
+}
 
+fn ensureBridgeLocked(alloc: Allocator, workspace: []const u8) !client_mod.Client {
     const api_key = resolveApiKey() orelse return error.MissingCursorApiKey;
-    const model = resolveModel(preferred_model);
-
     if (!started) {
-        if (prepare_host_callback) |prepare| prepare();
         manager = bridge_mod.Manager.init(alloc);
         const attach_url = io_mod.getenv("CURSOR_SDK_BRIDGE_URL");
         const attach_token = io_mod.getenv("CURSOR_SDK_BRIDGE_TOKEN");
-        const callback: ?bridge_mod.ToolCallback = if (host_callback_url != null and host_callback_token != null)
-            .{ .url = host_callback_url.?, .token = host_callback_token.? }
-        else
-            null;
+        const callback = currentCallback();
         const endpoint = if (attach_url != null and attach_token != null)
             try manager.attach(attach_url.?, attach_token.?)
         else
@@ -125,7 +120,7 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
             };
 
         api_key_owned = try alloc.dupe(u8, api_key);
-        workspace_owned = try alloc.dupe(u8, workspace);
+        if (workspace_owned == null) workspace_owned = try alloc.dupe(u8, workspace);
         client_mem = client_mod.Client.init(alloc, endpoint.url, endpoint.token, api_key_owned.?);
         client_mem.?.ping() catch |err| {
             manager.stop();
@@ -141,8 +136,46 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
         }
         started = true;
     }
+    return client_mem orelse error.CursorSessionUnavailable;
+}
 
-    const client = client_mem orelse return error.CursorSessionUnavailable;
+fn registerCallbackIfNeededLocked() void {
+    if (custom_tools_ready) return;
+    if (prepare_host_callback) |prepare| prepare();
+    const client = client_mem orelse return;
+    const callback = currentCallback() orelse return;
+    if (client.setToolCallback(callback.url, callback.token)) |_| {
+        custom_tools_ready = true;
+    } else |_| {}
+}
+
+/// Starts the SDK bridge (or attaches) without creating an agent.
+/// Used by `/model` so the picker can cache Cursor's ListModels catalog.
+/// The returned buffer is owned by `alloc`; session lifetime state stays on `alloc_ref`.
+pub fn listModelsJson(alloc: Allocator) Allocator.Error!?[]u8 {
+    const zio = io_mod.getIo();
+    mutex.lockUncancelable(zio);
+    defer mutex.unlock(zio);
+    const workspace = workspace_owned orelse ".";
+    const client = ensureBridgeLocked(alloc_ref, workspace) catch return null;
+    const raw = client.listModels() catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    };
+    defer client.alloc.free(raw);
+    return try alloc.dupe(u8, raw);
+}
+
+pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const u8, resume_id: ?[]const u8) !Session {
+    const zio = io_mod.getIo();
+    mutex.lockUncancelable(zio);
+    defer mutex.unlock(zio);
+    alloc_ref = alloc;
+
+    const model = resolveModel(preferred_model);
+    if (prepare_host_callback) |prepare| prepare();
+    const client = try ensureBridgeLocked(alloc, workspace);
+    registerCallbackIfNeededLocked();
     if (agent_id_owned == null) {
         const resolved = try resolveResumeIdLocked(alloc, workspace, resume_id);
         defer if (resolved.owned) alloc.free(resolved.id.?);
