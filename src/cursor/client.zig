@@ -43,7 +43,11 @@ pub const Client = struct {
     }
 
     pub fn createAgent(self: Client, cwd: []const u8, model: []const u8) ![]u8 {
-        const req = try agentRequestJson(self.alloc, self.api_key, cwd, model, null);
+        return self.createAgentWithTools(cwd, model, true);
+    }
+
+    pub fn createAgentWithTools(self: Client, cwd: []const u8, model: []const u8, advertise_tools: bool) ![]u8 {
+        const req = try agentRequestJson(self.alloc, self.api_key, cwd, model, null, advertise_tools);
         defer self.alloc.free(req);
         const body = try self.transport.unaryJson("SdkAgentService", "CreateAgent", req);
         defer self.alloc.free(body);
@@ -56,7 +60,17 @@ pub const Client = struct {
     }
 
     pub fn resumeAgent(self: Client, agent_id: []const u8, cwd: []const u8, model: []const u8) ![]u8 {
-        const req = try agentRequestJson(self.alloc, self.api_key, cwd, model, agent_id);
+        return self.resumeAgentWithTools(agent_id, cwd, model, true);
+    }
+
+    pub fn resumeAgentWithTools(
+        self: Client,
+        agent_id: []const u8,
+        cwd: []const u8,
+        model: []const u8,
+        advertise_tools: bool,
+    ) ![]u8 {
+        const req = try agentRequestJson(self.alloc, self.api_key, cwd, model, agent_id, advertise_tools);
         defer self.alloc.free(req);
         const body = try self.transport.unaryJson("SdkAgentService", "ResumeAgent", req);
         defer self.alloc.free(body);
@@ -132,6 +146,7 @@ pub fn agentRequestJson(
     cwd: []const u8,
     model: []const u8,
     agent_id: ?[]const u8,
+    advertise_tools: bool,
 ) ![]u8 {
     const key = try quoted(alloc, api_key);
     defer alloc.free(key);
@@ -139,21 +154,29 @@ pub fn agentRequestJson(
     defer alloc.free(model_q);
     const cwd_q = try quoted(alloc, cwd);
     defer alloc.free(cwd_q);
-    const tools = try host_tools.customToolsJson(alloc);
-    defer alloc.free(tools);
+    const local = if (advertise_tools) blk: {
+        const tools = try host_tools.customToolsJson(alloc);
+        defer alloc.free(tools);
+        break :blk try std.fmt.allocPrint(
+            alloc,
+            "{{\"cwd\":[{s}],\"customTools\":{s}}}",
+            .{ cwd_q, tools },
+        );
+    } else try std.fmt.allocPrint(alloc, "{{\"cwd\":[{s}]}}", .{cwd_q});
+    defer alloc.free(local);
     if (agent_id) |id| {
         const id_q = try quoted(alloc, id);
         defer alloc.free(id_q);
         return std.fmt.allocPrint(
             alloc,
-            "{{\"agentId\":{s},\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{{\"cwd\":[{s}],\"customTools\":{s}}}}}}}",
-            .{ id_q, key, model_q, cwd_q, tools },
+            "{{\"agentId\":{s},\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{s}}}}}",
+            .{ id_q, key, model_q, local },
         );
     }
     return std.fmt.allocPrint(
         alloc,
-        "{{\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{{\"cwd\":[{s}],\"customTools\":{s}}}}}}}",
-        .{ key, model_q, cwd_q, tools },
+        "{{\"options\":{{\"apiKey\":{s},\"model\":{{\"id\":{s}}},\"local\":{s}}}}}",
+        .{ key, model_q, local },
     );
 }
 
@@ -172,7 +195,7 @@ test "json string quoting escapes" {
 
 test "create and resume agent JSON include customTools" {
     const alloc = std.testing.allocator;
-    const created = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", null);
+    const created = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", null, true);
     defer alloc.free(created);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"customTools\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, created, "\"AskQuestion\"") != null);
@@ -183,8 +206,16 @@ test "create and resume agent JSON include customTools" {
         defer parsed.deinit();
     }
 
-    const resumed = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", "agent_1");
+    const resumed = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", "agent_1", true);
     defer alloc.free(resumed);
     try std.testing.expect(std.mem.indexOf(u8, resumed, "\"agentId\":\"agent_1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, resumed, "\"customTools\"") != null);
+}
+
+test "agent JSON can omit customTools" {
+    const alloc = std.testing.allocator;
+    const created = try agentRequestJson(alloc, "k", "/tmp/ws", "grok-4.6", null, false);
+    defer alloc.free(created);
+    try std.testing.expect(std.mem.indexOf(u8, created, "customTools") == null);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"cwd\"") != null);
 }

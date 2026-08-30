@@ -26,6 +26,16 @@ var alloc_ref: Allocator = std.heap.c_allocator;
 var bridge_bin_owned: ?[]u8 = null;
 /// Optional host hook (tool callback server). Set by the Cursor turn path.
 pub var on_shutdown: ?*const fn () void = null;
+/// Starts the loopback CallCustomTool server before the bridge process / CreateAgent.
+pub var prepare_host_callback: ?*const fn () void = null;
+var custom_tools_ready: bool = false;
+var host_callback_url: ?[]const u8 = null;
+var host_callback_token: ?[]const u8 = null;
+
+pub fn noteHostCallback(url: []const u8, token: []const u8) void {
+    host_callback_url = url;
+    host_callback_token = token;
+}
 
 pub fn resolveApiKey() ?[]const u8 {
     return io_mod.getenv("CURSOR_API_KEY") orelse io_mod.getenv("AI_GATEWAY_API_KEY");
@@ -99,13 +109,18 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
     const model = resolveModel(preferred_model);
 
     if (!started) {
+        if (prepare_host_callback) |prepare| prepare();
         manager = bridge_mod.Manager.init(alloc);
         const attach_url = io_mod.getenv("CURSOR_SDK_BRIDGE_URL");
         const attach_token = io_mod.getenv("CURSOR_SDK_BRIDGE_TOKEN");
+        const callback: ?bridge_mod.ToolCallback = if (host_callback_url != null and host_callback_token != null)
+            .{ .url = host_callback_url.?, .token = host_callback_token.? }
+        else
+            null;
         const endpoint = if (attach_url != null and attach_token != null)
             try manager.attach(attach_url.?, attach_token.?)
         else
-            manager.start(resolveBridgeBin(), workspace, api_key) catch |err| {
+            manager.start(resolveBridgeBin(), workspace, api_key, callback) catch |err| {
                 return err;
             };
 
@@ -116,6 +131,14 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
             manager.stop();
             return err;
         };
+        if (callback) |cb| {
+            if (client_mem.?.setToolCallback(cb.url, cb.token)) |_| {
+                custom_tools_ready = true;
+            } else |_| {
+                // Spawned bridges also get --tool-callback-* at launch.
+                custom_tools_ready = attach_url == null;
+            }
+        }
         started = true;
     }
 
@@ -124,9 +147,9 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
         const resolved = try resolveResumeIdLocked(alloc, workspace, resume_id);
         defer if (resolved.owned) alloc.free(resolved.id.?);
         if (resolved.id) |id| {
-            agent_id_owned = try client.resumeAgent(id, workspace, model);
+            agent_id_owned = try client.resumeAgentWithTools(id, workspace, model, custom_tools_ready);
         } else {
-            agent_id_owned = try client.createAgent(workspace, model);
+            agent_id_owned = try client.createAgentWithTools(workspace, model, custom_tools_ready);
         }
         persistLastAgentLocked(workspace, agent_id_owned.?) catch {};
     }
@@ -304,6 +327,9 @@ pub fn shutdown() void {
     api_key_owned = null;
     model_owned = null;
     bridge_bin_owned = null;
+    custom_tools_ready = false;
+    host_callback_url = null;
+    host_callback_token = null;
     client_mem = null;
     started = false;
     resume_last = false;

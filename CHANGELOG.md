@@ -1,5 +1,13 @@
 # fx
 
+## 0.2.1
+
+**Fix CreateAgent `failed_precondition` when advertising AskQuestion: register the host tool callback before create/resume.**
+
+### Bug Fixes
+
+- **Custom tools**: `cc` now starts the loopback `CallCustomTool` server, passes `--tool-callback-url` / `--tool-callback-auth-token` when spawning the bridge, and calls `SetToolCallback` before `CreateAgent` / `ResumeAgent`.
+
 ## 0.2.0
 
 **cursor-composer: native Windows `cc.exe`, Cursor `AskQuestion` in the fx TUI, and quieter bridge lifecycle notices.**
