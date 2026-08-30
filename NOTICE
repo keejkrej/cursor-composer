@@ -1,0 +1,10 @@
+cursor-composer
+Copyright 2026 cursor-composer contributors
+
+This product includes software developed by Vercel Labs as fx
+(https://github.com/vercel-labs/fx), licensed under the Apache License,
+Version 2.0. The Terminal User Interface under src/ui and the surrounding
+FX application shell are copied from that project. Modifications route
+agent turns through the Cursor SDK Bridge instead of fx's local agent loop.
+
+See LICENSE and THIRD_PARTY_NOTICES.md.

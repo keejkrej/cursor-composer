@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig 0.16.0
+        run: |
+          curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+      - name: Cursor adapter tests
+        run: zig test -lc src/cursor_tests.zig
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe
+      - name: Help
+        run: ./zig-out/bin/cc --help
+      - name: Auth copy
+        run: |
+          ./zig-out/bin/cc ask "ping" 2>&1 | tee /tmp/ask-no-key.txt || true
+          grep -q "CURSOR_API_KEY" /tmp/ask-no-key.txt
+      - name: Mock ask turn
+        run: |
+          python3 scripts/mock-sdk-bridge.py >/tmp/mock-bridge.out 2>/tmp/mock-bridge.err &
+          echo $! > /tmp/mock-bridge.pid
+          for i in $(seq 1 50); do
+            grep -q '^READY ' /tmp/mock-bridge.out && break
+            sleep 0.1
+          done
+          URL=$(sed -n 's/^READY //p' /tmp/mock-bridge.out)
+          CURSOR_API_KEY=test-key \
+            CURSOR_SDK_BRIDGE_URL="$URL" \
+            CURSOR_SDK_BRIDGE_TOKEN=test-bridge-token \
+            ./zig-out/bin/cc ask "hello" | tee /tmp/ask-mock.txt
+          grep -q "hello from mock" /tmp/ask-mock.txt
+          kill "$(cat /tmp/mock-bridge.pid)" || true
+      - name: Installer syntax
+        run: bash -n install && chmod +x install scripts/package-release.sh
+      - name: Installer dry-run
+        run: |
+          mkdir -p /tmp/cc-pkg
+          printf '%s\n' '#!/bin/sh' 'echo cc' > /tmp/cc-pkg/cc
+          printf '%s\n' '#!/bin/sh' 'echo bridge' > /tmp/cc-pkg/cursor-sdk-bridge
+          chmod +x /tmp/cc-pkg/cc /tmp/cc-pkg/cursor-sdk-bridge
+          tar -czf /tmp/cc-linux-x64.tar.gz -C /tmp/cc-pkg cc cursor-sdk-bridge
+          CC_ARCHIVE=/tmp/cc-linux-x64.tar.gz \
+            CC_INSTALL_DIR=/tmp/cc-inst \
+            CC_SKIP_PATH=1 \
+            ./install
+          test -x /tmp/cc-inst/cc
+          test -x /tmp/cc-inst/cursor-sdk-bridge
+      - name: Release target smoke
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl -Dcpu=baseline
