@@ -629,7 +629,7 @@ pub fn handlePrompt(
         writable.childCapability() catch null
     else
         null;
-    agent_runtime.processQueuedPrompt(&deps, null, .{
+    @import("../cursor/runtime.zig").processQueuedPrompt(&deps, null, .{
         .view = state.lifecycle_view,
         .scope = .{
             .kind = .acp,

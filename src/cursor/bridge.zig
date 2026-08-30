@@ -153,6 +153,7 @@ pub fn parseReadyLine(alloc: Allocator, line: []const u8) !Discovery {
         .integer => |n| n,
         else => return error.UnsupportedBridgeDiscovery,
     };
+    if (schema_version != 1) return error.UnsupportedBridgeDiscovery;
 
     return .{
         .schema_version = schema_version,

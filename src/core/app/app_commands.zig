@@ -623,6 +623,7 @@ pub fn Handlers(comptime App: type) type {
 
         fn commandResumeSession(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
+            @import("../../cursor/session.zig").noteResumeLast();
             if (comptime !runtime_profile.allows(App, .durable_sessions)) {
                 try app.writeDomainNotice(.{
                     .topic = "session",

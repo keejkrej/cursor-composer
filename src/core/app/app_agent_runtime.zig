@@ -987,13 +987,13 @@ pub fn Runtime(comptime App: type) type {
                 &tool_projection,
                 session_child_capability,
             );
-            // Production: Cursor SDK Bridge owns the agent loop. FX unit tests
-            // without CURSOR_API_KEY keep exercising the original orchestrator.
-            const process_result = if (@import("../../cursor/session.zig").resolveApiKey() != null or
-                @import("../../core/shared/io.zig").getenv("CURSOR_SDK_BRIDGE_URL") != null)
-                @import("../../cursor/turn.zig").processQueuedPrompt(&deps, semantic_presentation, lifecycleContext(app), config, job)
-            else
-                agent_runtime.processQueuedPrompt(&deps, semantic_presentation, lifecycleContext(app), config, job);
+            const process_result = @import("../../cursor/runtime.zig").processQueuedPrompt(
+                &deps,
+                semantic_presentation,
+                lifecycleContext(app),
+                config,
+                job,
+            );
             if (postflight_context_notices.written().len > 0) {
                 try app_worker_runtime.Runtime(App).pushSemanticNotice(app, .{
                     .topic = "context",

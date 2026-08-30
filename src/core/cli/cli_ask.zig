@@ -1494,6 +1494,9 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     ctx.provider = startup.provider;
     ctx.seed_model = startup.configured_model;
     ctx.requested_resume = options.resume_target;
+    if (options.resume_target) |target| {
+        @import("../../cursor/session.zig").noteResumeFromTarget(target);
+    }
     ctx.agent_step_limit = startup.agent_step_limit;
     ctx.max_tool_result_bytes = startup.max_tool_result_bytes;
     ctx.context_limits = startup.context_limits;
@@ -3726,12 +3729,7 @@ fn testInitializeSessionStoresOneOffDenied(_: *AskContext) !void {
 }
 
 fn processQueuedPromptDefault(deps: *const agent_runtime.AgentRuntimeDeps, semantic_presentation: ?agent_runtime.SemanticPresentationSink, lifecycle: agent_runtime.LifecycleContext, config: agent_runtime.Config, job: worker_runtime.QueuedPrompt) !void {
-    if (@import("../../cursor/session.zig").resolveApiKey() != null or
-        @import("../../core/shared/io.zig").getenv("CURSOR_SDK_BRIDGE_URL") != null)
-    {
-        return @import("../../cursor/turn.zig").processQueuedPrompt(deps, semantic_presentation, lifecycle, config, job);
-    }
-    return agent_runtime.processQueuedPrompt(deps, semantic_presentation, lifecycle, config, job);
+    return @import("../../cursor/runtime.zig").processQueuedPrompt(deps, semantic_presentation, lifecycle, config, job);
 }
 
 fn discardPristineSessionDefault(

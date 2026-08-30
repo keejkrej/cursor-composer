@@ -1488,6 +1488,9 @@ pub fn Runtime(comptime App: type) type {
             app: *App,
             background_policy: BackgroundSessionPolicy,
         ) !void {
+            if (comptime @hasField(App, "workspace_root")) {
+                @import("../../cursor/session.zig").beginNewAgent(app.workspace_root);
+            }
             const previous_policy = app.session_persistence.pending_live_session_policy;
             const decision = decideLiveSessionTransition(
                 runtime_profile.allows(App, .cooperative_agent),

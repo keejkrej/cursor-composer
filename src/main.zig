@@ -637,6 +637,7 @@ const App = struct {
         }
         app.shell.max_transcript_bytes = max_transcript_bytes;
         if (launch.requested_resume) |target| {
+            @import("cursor/session.zig").noteResumeFromTarget(target);
             app.requested_resume = target;
             launch.requested_resume = null;
         }
@@ -4063,6 +4064,8 @@ test {
     _ = @import("cursor/bridge.zig");
     _ = @import("cursor/client.zig");
     _ = @import("cursor/session.zig");
+    _ = @import("cursor/runtime.zig");
+    _ = @import("cursor/turn.zig");
     _ = @import("core/auth/login_flow.zig");
     _ = @import("core/auth/chatgpt_oauth.zig");
     _ = @import("core/auth/provider_catalog.zig");

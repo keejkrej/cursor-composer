@@ -37,7 +37,7 @@ const NO_GATEWAY_AUTH = {
   VERCEL_OIDC_TOKEN: undefined,
 };
 const MISSING_AUTH_MESSAGE =
-  "fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.";
+  "Set CURSOR_API_KEY to call the Cursor Agent API via the SDK Bridge.";
 const MODERN_MCP_FIXTURE = join(
   import.meta.dirname,
   "fixtures",

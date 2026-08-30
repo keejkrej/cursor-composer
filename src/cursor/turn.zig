@@ -50,11 +50,13 @@ fn processQueuedPromptInner(
     job: QueuedPrompt,
 ) !void {
     const workspace = if (config.workspace_root.len > 0) config.workspace_root else ".";
+    const resume_hint = session.peekResumeId(std.heap.c_allocator, workspace);
+    defer if (resume_hint) |id| std.heap.c_allocator.free(id);
     const handle = session.ensure(
         std.heap.c_allocator,
         workspace,
         job.model,
-        null,
+        resume_hint,
     ) catch |err| {
         const message = switch (err) {
             error.MissingCursorApiKey => "Set CURSOR_API_KEY to call the Cursor Agent API via the SDK Bridge.",
@@ -75,6 +77,12 @@ fn processQueuedPromptInner(
         .run_id = null,
     };
     defer if (stream.run_id) |run_id| stream.alloc.free(run_id);
+
+    if (resume_hint != null) {
+        try deps.push_system_notice(deps.ctx, "Resuming Cursor agent via the SDK Bridge.");
+    } else {
+        try deps.push_system_notice(deps.ctx, "Created Cursor agent via the SDK Bridge.");
+    }
 
     handle.client.send(
         handle.agent_id,

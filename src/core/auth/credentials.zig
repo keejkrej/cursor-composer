@@ -196,17 +196,18 @@ pub const LoadMode = enum { stored, refresh_if_needed };
 
 const FxLoginRefreshMode = enum { if_needed, force };
 
-pub const missing_credential_message = "fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.";
-pub const missing_interactive_credential_message = "fx needs access to Vercel AI Gateway. Run /login to sign in, /setup to use an API key, or set AI_GATEWAY_API_KEY.";
+pub const missing_credential_message = "Set CURSOR_API_KEY to call the Cursor Agent API via the SDK Bridge.";
+pub const missing_interactive_credential_message = "Set CURSOR_API_KEY to call the Cursor Agent API via the SDK Bridge.";
 pub const missing_chatgpt_credential_message = "fx needs a Codex subscription login for this model. Run fx login codex.";
 pub const missing_chatgpt_interactive_credential_message = "Codex needs a subscription login. Run /login, open Connections, then choose Codex subscription.";
 pub const missing_grok_credential_message = "fx needs a Grok subscription login for this model. Run fx login grok.";
 pub const missing_grok_interactive_credential_message = "Grok needs a subscription login. Run /login, open Connections, then choose Grok subscription.";
 pub const unreadable_store_message = "fx could not read the stored API key from " ++ stored_key_backend_label ++ ". A key may be saved but unreadable. Set FX_TRACE_LOG for the failing step, or set AI_GATEWAY_API_KEY.";
 
-test "public credential guidance spells fx lowercase" {
-    try std.testing.expect(std.mem.startsWith(u8, missing_credential_message, "fx needs"));
-    try std.testing.expect(std.mem.startsWith(u8, missing_interactive_credential_message, "fx needs"));
+test "public credential guidance points at CURSOR_API_KEY" {
+    try std.testing.expect(std.mem.find(u8, missing_credential_message, "CURSOR_API_KEY") != null);
+    try std.testing.expect(std.mem.find(u8, missing_interactive_credential_message, "CURSOR_API_KEY") != null);
+    try std.testing.expect(std.mem.find(u8, missing_credential_message, "SDK Bridge") != null);
     try std.testing.expect(std.mem.startsWith(u8, unreadable_store_message, "fx could"));
 }
 
@@ -679,20 +680,9 @@ test "stored key label discloses the backend that answered" {
     }
 }
 
-test "missing credential messages use surface commands in preferred order" {
-    const cli_login = std.mem.find(u8, missing_credential_message, "fx login").?;
-    const cli_setup = std.mem.find(u8, missing_credential_message, "fx setup").?;
-    const cli_env = std.mem.find(u8, missing_credential_message, "AI_GATEWAY_API_KEY").?;
-
-    try std.testing.expect(cli_login < cli_setup);
-    try std.testing.expect(cli_setup < cli_env);
-
-    const tui_login = std.mem.find(u8, missing_interactive_credential_message, "/login").?;
-    const tui_setup = std.mem.find(u8, missing_interactive_credential_message, "/setup").?;
-    const tui_env = std.mem.find(u8, missing_interactive_credential_message, "AI_GATEWAY_API_KEY").?;
-
-    try std.testing.expect(tui_login < tui_setup);
-    try std.testing.expect(tui_setup < tui_env);
+test "missing credential messages name the Cursor API key first" {
+    try std.testing.expect(std.mem.startsWith(u8, missing_credential_message, "Set CURSOR_API_KEY"));
+    try std.testing.expect(std.mem.startsWith(u8, missing_interactive_credential_message, "Set CURSOR_API_KEY"));
 }
 
 test "credential gateway team prefers team id" {

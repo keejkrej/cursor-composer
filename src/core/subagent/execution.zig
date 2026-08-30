@@ -965,8 +965,8 @@ pub const TurnContext = struct {
     }
 };
 
-/// The production adapter uses the same orchestrator as interactive, ask, and
-/// ACP execution. Host-specific dependency assembly stays outside the manager.
+/// The production adapter uses the same Cursor SDK Bridge turn as interactive,
+/// ask, and ACP execution. Host-specific dependency assembly stays outside the manager.
 pub const NormalAgentError = error{
     OutOfMemory,
     Cancelled,
@@ -980,7 +980,7 @@ pub fn runNormalAgentTurn(
     config: runtime_config.Config,
     prompt: worker_runtime.QueuedPrompt,
 ) NormalAgentError!void {
-    agent_runtime.processQueuedPrompt(
+    @import("../../cursor/runtime.zig").processQueuedPrompt(
         deps,
         semantic_presentation,
         lifecycle,

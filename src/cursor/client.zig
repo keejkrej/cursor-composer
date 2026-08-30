@@ -55,7 +55,7 @@ pub const Client = struct {
         );
         defer self.alloc.free(req);
         const body = try self.transport.unaryJson("SdkAgentService", "CreateAgent", req);
-        errdefer self.alloc.free(body);
+        defer self.alloc.free(body);
         const parsed = std.json.parseFromSlice(std.json.Value, self.alloc, body, .{}) catch return error.CreateAgentFailed;
         defer parsed.deinit();
         const id = json_util.stringGet(parsed.value, "agentId") orelse
