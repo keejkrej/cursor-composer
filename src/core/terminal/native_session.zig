@@ -17,6 +17,7 @@ const command_admission = @import("../permissions/command_admission.zig");
 const command_runner = @import("../execution/command_runner.zig");
 const execution_router = @import("../execution/router.zig");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const self_exe = @import("../shared/self_exe.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const types = @import("../shared/types.zig");
@@ -55,6 +56,31 @@ const ioctl_set_window_size: c_int = switch (builtin.os.tag) {
     .macos => @bitCast(@as(u32, 0x80087467)),
     .linux => @intCast(std.os.linux.T.IOCSWINSZ),
     else => 0,
+};
+
+const posix_pgid = if (os_compat.has_posix_signals) struct {
+    fn kill(pid: std.posix.pid_t, signal: std.c.SIG) c_int {
+        return std.c.kill(-pid, signal);
+    }
+} else struct {
+    fn kill(_: std.posix.pid_t, _: i32) c_int {
+        return -1;
+    }
+};
+
+fn parseOptionalNativePid(text: ?[]const u8) ?std.posix.pid_t {
+    return parse_optional_native_pid.run(text);
+}
+
+const parse_optional_native_pid = if (os_compat.has_posix_signals) struct {
+    fn run(text: ?[]const u8) ?std.posix.pid_t {
+        const value = text orelse return null;
+        return std.fmt.parseInt(std.posix.pid_t, value, 10) catch null;
+    }
+} else struct {
+    fn run(_: ?[]const u8) ?std.posix.pid_t {
+        return null;
+    }
 };
 
 const control_frame_len: usize = 5;
@@ -98,21 +124,21 @@ const LauncherWatchdog = struct {
     host_closed: std.atomic.Value(bool) = .init(false),
 
     fn run(self: *LauncherWatchdog) void {
-        var poll_fds = [_]std.posix.pollfd{.{
-            .fd = std.posix.STDIN_FILENO,
-            .events = std.posix.POLL.IN,
+        var poll_fds = [_]os_compat.pollfd{.{
+                    .fd = os_compat.stdinHandle(),
+            .events = os_compat.POLL.IN,
             .revents = 0,
         }};
         while (!self.done.load(.acquire)) {
             poll_fds[0].revents = 0;
-            _ = std.posix.poll(&poll_fds, control_poll_ms) catch {
+            _ = os_compat.poll(&poll_fds, control_poll_ms) catch {
                 self.host_closed.store(true, .release);
-                _ = std.c.kill(-self.child_pid, std.c.SIG.KILL);
+                _ = posix_pgid.kill(self.child_pid, std.c.SIG.KILL);
                 return;
             };
             if (poll_fds[0].revents == 0) continue;
             var byte: [1]u8 = undefined;
-            const count = std.posix.read(std.posix.STDIN_FILENO, &byte) catch 0;
+            const count = os_compat.read(os_compat.stdinHandle(), &byte) catch 0;
             if (count != 0) {
                 if (byte[0] == command_release_byte) {
                     self.command_released.store(true, .release);
@@ -121,7 +147,7 @@ const LauncherWatchdog = struct {
             }
             self.host_closed.store(true, .release);
             if (!self.done.load(.acquire)) {
-                _ = std.c.kill(-self.child_pid, std.c.SIG.KILL);
+                _ = posix_pgid.kill(self.child_pid, std.c.SIG.KILL);
             }
             return;
         }
@@ -153,14 +179,14 @@ const LauncherControl = struct {
     }
 
     fn runInner(self: *LauncherControl) !void {
-        var poll_fds = [_]std.posix.pollfd{.{
+        var poll_fds = [_]os_compat.pollfd{.{
             .fd = self.server.socket.handle,
-            .events = std.posix.POLL.IN,
+            .events = os_compat.POLL.IN,
             .revents = 0,
         }};
         while (!self.done.load(.acquire)) {
             poll_fds[0].revents = 0;
-            _ = try std.posix.poll(&poll_fds, control_poll_ms);
+            _ = try os_compat.poll(&poll_fds, control_poll_ms);
             if (poll_fds[0].revents == 0) continue;
 
             var stream = self.server.accept(io_mod.getIo()) catch |err| switch (err) {
@@ -572,7 +598,7 @@ pub fn runLauncher(alloc: Allocator) !void {
 }
 
 fn signalLauncherProcessGroup(pid: std.c.pid_t, signal: std.c.SIG) !void {
-    while (true) switch (std.c.errno(std.c.kill(-pid, signal))) {
+    while (true) switch (std.c.errno(posix_pgid.kill(pid, signal))) {
         .SUCCESS => return,
         .INTR => continue,
         else => return error.ChildSignalFailed,
@@ -3203,13 +3229,13 @@ fn applyMonitorSocketTimeout(stream: std.Io.net.Stream, timeout_ms: i64) void {
         .sec = @intCast(@divTrunc(timeout_ms, 1000)),
         .usec = @intCast(@mod(timeout_ms, 1000) * 1000),
     };
-    std.posix.setsockopt(
+    os_compat.setsockopt(
         stream.socket.handle,
         std.posix.SOL.SOCKET,
         std.posix.SO.RCVTIMEO,
         std.mem.asBytes(&timeout),
     ) catch {};
-    std.posix.setsockopt(
+    os_compat.setsockopt(
         stream.socket.handle,
         std.posix.SOL.SOCKET,
         std.posix.SO.SNDTIMEO,
@@ -3392,10 +3418,7 @@ const Session = struct {
             },
             else => return err,
         };
-        const child_pid = if (durable.record.pid) |value|
-            std.fmt.parseInt(std.posix.pid_t, value, 10) catch null
-        else
-            null;
+        const child_pid = parseOptionalNativePid(durable.record.pid);
         const child_token = if (durable.record.process_token) |value|
             process_supervisor.ProcessInstanceToken.parse(value) catch null
         else
@@ -4214,7 +4237,7 @@ const Session = struct {
         const pid_text = std.fmt.bufPrint(
             &pid_buffer,
             "{d}",
-            .{target.pid},
+            .{os_compat.formatPid(target.pid)},
         ) catch return false;
         return self.durable.profile.process_provider.matchToken(
             self.alloc,
@@ -4271,8 +4294,8 @@ const Session = struct {
         if (!self.matchesSignalTarget(target)) {
             return if (processGroupMissing(target.pid)) .missing else .failed;
         }
-        while (true) switch (std.c.errno(std.c.kill(
-            -target.pid,
+        while (true) switch (std.c.errno(posix_pgid.kill(
+            target.pid,
             signalValue(signal),
         ))) {
             .SUCCESS => return .delivered,
@@ -4291,14 +4314,14 @@ const Session = struct {
         self.mutex.unlock(zio);
         if (!running or pid == null or token == null) return false;
         var pid_buffer: [32]u8 = undefined;
-        const pid_text = std.fmt.bufPrint(&pid_buffer, "{d}", .{pid.?}) catch
+        const pid_text = std.fmt.bufPrint(&pid_buffer, "{d}", .{os_compat.formatPid(pid.?)}) catch
             return false;
         if (self.durable.profile.process_provider.matchToken(
             self.alloc,
             pid_text,
             token.?,
         ) != .matched) return false;
-        return std.c.kill(-pid.?, signal) == 0;
+        return posix_pgid.kill(pid.?, signal) == 0;
     }
 
     fn appendOutput(self: *Session, bytes: []const u8) void {
@@ -4582,7 +4605,7 @@ const Session = struct {
             return;
         };
         var pid_buffer: [32]u8 = undefined;
-        const pid_text = std.fmt.bufPrint(&pid_buffer, "{d}", .{pid}) catch {
+        const pid_text = std.fmt.bufPrint(&pid_buffer, "{d}", .{os_compat.formatPid(pid)}) catch {
             self.failClosed(.session_lost);
             return;
         };
@@ -4603,7 +4626,7 @@ const Session = struct {
             debug_trace.logf(
                 "terminal_host",
                 "tmux recovered child identity unavailable id={s} pid={d}",
-                .{ self.id, pid },
+                .{ self.id, os_compat.formatPid(pid) },
             );
             self.failClosed(.process_identity_unavailable);
             return;
@@ -5656,16 +5679,26 @@ fn terminalSignalCompleted(
 }
 
 fn processGroupMissing(pid: std.posix.pid_t) bool {
-    while (true) switch (std.c.errno(std.c.kill(
-        -pid,
-        @enumFromInt(0),
-    ))) {
-        .SUCCESS, .PERM => return false,
-        .INTR => continue,
-        .SRCH => return true,
-        else => return false,
-    };
+    return posix_process_group.missing(pid);
 }
+
+const posix_process_group = if (os_compat.has_posix_signals) struct {
+    fn missing(pid: std.posix.pid_t) bool {
+        while (true) switch (std.c.errno(posix_pgid.kill(
+            pid,
+            @enumFromInt(0),
+        ))) {
+            .SUCCESS, .PERM => return false,
+            .INTR => continue,
+            .SRCH => return true,
+            else => return false,
+        };
+    }
+} else struct {
+    fn missing(_: std.posix.pid_t) bool {
+        return true;
+    }
+};
 
 test "running tmux recovery does not pause the published process group" {
     try std.testing.expect(!shouldPauseRecoveredTmuxProcess(
@@ -5879,23 +5912,46 @@ test "PTY output drains use a nonblocking master" {
 }
 
 fn resizeFd(fd: std.posix.fd_t, dimensions: contracts.Dimensions) !void {
-    var size = std.posix.winsize{
-        .row = dimensions.rows,
-        .col = dimensions.columns,
-        .xpixel = 0,
-        .ypixel = 0,
-    };
-    if (std.c.ioctl(
-        fd,
-        ioctl_set_window_size,
-        &size,
-    ) < 0) return error.ResizeFailed;
+    return posix_tty.resizeFd(fd, dimensions);
 }
 
 fn setEcho(fd: std.posix.fd_t, enabled: bool) !void {
-    var termios = try std.posix.tcgetattr(fd);
-    termios.lflag.ECHO = enabled;
-    try std.posix.tcsetattr(fd, .NOW, termios);
+    return posix_tty.setEcho(fd, enabled);
+}
+
+const posix_tty = if (builtin.os.tag == .windows) struct {
+    fn resizeFd(_: std.posix.fd_t, _: contracts.Dimensions) !void {
+        return error.ResizeFailed;
+    }
+    fn setEcho(_: std.posix.fd_t, _: bool) !void {}
+} else struct {
+    fn resizeFd(fd: std.posix.fd_t, dimensions: contracts.Dimensions) !void {
+        var size = std.posix.winsize{
+            .row = dimensions.rows,
+            .col = dimensions.columns,
+            .xpixel = 0,
+            .ypixel = 0,
+        };
+        if (std.c.ioctl(
+            fd,
+            ioctl_set_window_size,
+            &size,
+        ) < 0) return error.ResizeFailed;
+    }
+
+    fn setEcho(fd: std.posix.fd_t, enabled: bool) !void {
+        var termios = try std.posix.tcgetattr(fd);
+        termios.lflag.ECHO = enabled;
+        try std.posix.tcsetattr(fd, .NOW, termios);
+    }
+};
+
+fn resizeFdPosix(fd: std.posix.fd_t, dimensions: contracts.Dimensions) !void {
+    return posix_tty.resizeFd(fd, dimensions);
+}
+
+fn setEchoPosix(fd: std.posix.fd_t, enabled: bool) !void {
+    return posix_tty.setEcho(fd, enabled);
 }
 
 fn closeFd(fd: std.posix.fd_t) void {
@@ -6213,15 +6269,15 @@ fn readOutputChunk(
     var total: usize = 0;
     var poll_timeout = timeout_ms;
     while (total < buffer.len) {
-        var poll_fds = [_]std.posix.pollfd{.{
+        var poll_fds = [_]os_compat.pollfd{.{
             .fd = fd,
-            .events = std.posix.POLL.IN,
+            .events = os_compat.POLL.IN,
             .revents = 0,
         }};
-        _ = try std.posix.poll(&poll_fds, poll_timeout);
+        _ = try os_compat.poll(&poll_fds, poll_timeout);
         const revents = poll_fds[0].revents;
         if (revents == 0) break;
-        if (revents & std.posix.POLL.IN == 0) {
+        if (revents & os_compat.POLL.IN == 0) {
             if (total == 0) return error.EndOfStream;
             break;
         }

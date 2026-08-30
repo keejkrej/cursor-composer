@@ -580,10 +580,10 @@ fn canonicalExistingDirectory(
         try std.fs.path.resolve(alloc, &.{ primary_directory, input_path });
     defer alloc.free(absolute);
 
-    const canonical = io_mod.realpathAlloc(alloc, absolute) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.FileNotFound => return error.PathNotFound,
-        else => return error.InvalidPath,
+    const canonical = io_mod.realpathAlloc(alloc, absolute) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (err == error.FileNotFound) return error.PathNotFound;
+        return error.InvalidPath;
     };
     errdefer alloc.free(canonical);
 

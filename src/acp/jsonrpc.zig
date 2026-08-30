@@ -309,7 +309,10 @@ pub const Reader = struct {
                 &.{destination},
             ) catch return 0;
         }
-        return std.posix.read(std.posix.STDIN_FILENO, destination) catch return 0;
+        return @import("../core/shared/os_compat.zig").read(
+            @import("../core/shared/os_compat.zig").stdinHandle(),
+            destination,
+        ) catch return 0;
     }
 
     fn readFromSource(self: *Reader) usize {

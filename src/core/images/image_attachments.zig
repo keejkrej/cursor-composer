@@ -858,9 +858,9 @@ fn inspectImageCandidate(
 }
 
 fn syncSnapshotDirectory(snapshot_dir: std.Io.Dir) !void {
-    io_mod.syncVerifiedDir(snapshot_dir) catch |err| switch (err) {
-        error.OperationUnsupported => {},
-        else => return err,
+    io_mod.syncVerifiedDir(snapshot_dir) catch |err| {
+        if (err == error.OperationUnsupported) return;
+        return err;
     };
 }
 

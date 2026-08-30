@@ -112,9 +112,18 @@ fn accountName(buf: *AccountBuffer) Error![]const u8 {
 }
 
 fn osAccountName(buf: *AccountBuffer) ?[]const u8 {
-    if (comptime builtin.os.tag == .macos) return posixAccountName(buf);
-    return null;
+    return posix_account_name.run(buf);
 }
+
+const posix_account_name = if (builtin.os.tag == .macos) struct {
+    fn run(buf: *AccountBuffer) ?[]const u8 {
+        return posixAccountName(buf);
+    }
+} else struct {
+    fn run(_: *AccountBuffer) ?[]const u8 {
+        return null;
+    }
+};
 
 fn posixAccountName(buf: *AccountBuffer) ?[]const u8 {
     var entry: std.c.passwd = undefined;

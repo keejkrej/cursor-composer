@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const contracts = @import("contracts.zig");
 const host_capabilities = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const process_supervisor = @import("../background/process_supervisor.zig");
 const background_process_provider = @import(
@@ -1054,7 +1055,7 @@ pub fn runLauncher(
         debug_trace.logf(
             "terminal_host",
             "tmux foreground handoff failed pid={d}",
-            .{child_pid},
+            .{os_compat.formatPid(child_pid)},
         );
         terminateAndReapChild(&child);
         child_owned = false;
@@ -1954,7 +1955,8 @@ fn writeShellIdentity(
     pid: std.posix.pid_t,
 ) !void {
     var pid_buffer: [32]u8 = undefined;
-    const pid_text = try std.fmt.bufPrint(&pid_buffer, "{d}", .{pid});
+    const pid_num = os_compat.formatPid(pid);
+    const pid_text = try std.fmt.bufPrint(&pid_buffer, "{d}", .{pid_num});
     const token = try process_provider.captureToken(
         alloc,
         pid_text,
@@ -1962,7 +1964,7 @@ fn writeShellIdentity(
     var output: std.Io.Writer.Allocating = .init(alloc);
     defer output.deinit();
     try std.json.Stringify.value(ShellIdentityWire{
-        .pid = @intCast(pid),
+        .pid = @intCast(pid_num),
         .process_token = token.view(),
     }, .{}, &output.writer);
     try writePrivateFile(path, output.written(), true);
@@ -2198,9 +2200,9 @@ fn acceptBeforeDeadline(
     deadline: PeerDeadline,
     cancelled: ?*const std.atomic.Value(bool),
 ) !std.Io.net.Stream {
-    var poll_fds = [_]std.posix.pollfd{.{
+    var poll_fds = [_]os_compat.pollfd{.{
         .fd = server.socket.handle,
-        .events = std.posix.POLL.IN,
+        .events = os_compat.POLL.IN,
         .revents = 0,
     }};
     while (true) {
@@ -2209,11 +2211,11 @@ fn acceptBeforeDeadline(
         }
         const remaining_ms = try deadline.remaining();
         poll_fds[0].revents = 0;
-        if (try std.posix.poll(
+        if (try os_compat.poll(
             &poll_fds,
             @intCast(@min(remaining_ms, deadline_poll_ms)),
         ) == 0) continue;
-        if ((poll_fds[0].revents & std.posix.POLL.IN) == 0) {
+        if ((poll_fds[0].revents & os_compat.POLL.IN) == 0) {
             return error.TmuxPeerUnavailable;
         }
         return server.accept(io_mod.getIo()) catch |err| switch (err) {

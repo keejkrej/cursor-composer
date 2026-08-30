@@ -8,6 +8,7 @@ const background_process_provider = @import(
     "background_process_provider.zig",
 );
 const io_mod = @import("../shared/io.zig");
+const os_compat = @import("../shared/os_compat.zig");
 const self_exe = @import("../shared/self_exe.zig");
 const background_launch_output = @import("../background/background_launch_output.zig");
 const config_runtime = @import("../config/config_runtime.zig");
@@ -1248,24 +1249,24 @@ fn waitForForegroundSessionReady(
 
         const remaining_ms = foreground_session_setup_timeout_ms - setup_elapsed_ms;
         const poll_timeout_ms: i32 = @intCast(@min(@as(i64, 50), remaining_ms));
-        var poll_fds = [_]std.posix.pollfd{.{
+        var poll_fds = [_]os_compat.pollfd{.{
             .fd = ready_read.handle,
-            .events = std.posix.POLL.IN,
+            .events = os_compat.POLL.IN,
             .revents = 0,
         }};
-        if (try std.posix.poll(&poll_fds, poll_timeout_ms) == 0) continue;
+        if (try os_compat.poll(&poll_fds, poll_timeout_ms) == 0) continue;
 
         const revents = poll_fds[0].revents;
-        if ((revents & std.posix.POLL.IN) != 0) {
+        if ((revents & os_compat.POLL.IN) != 0) {
             var marker: [1]u8 = undefined;
-            const marker_len = try std.posix.read(ready_read.handle, &marker);
+            const marker_len = try os_compat.read(ready_read.handle, &marker);
             if (marker_len == 0) return error.ForegroundSessionSetupFailed;
             if (marker[0] != foreground_session_ready_byte) {
                 return error.InvalidForegroundSessionReady;
             }
             return;
         }
-        if ((revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
+        if ((revents & (os_compat.POLL.HUP | os_compat.POLL.ERR | os_compat.POLL.NVAL)) != 0) {
             return error.ForegroundSessionSetupFailed;
         }
     }
@@ -1279,26 +1280,7 @@ fn cleanupForegroundSessionChild(
         cleanupChild(child);
         return;
     }
-    const pid = child.id orelse return;
-    const target_pid = switch (phase) {
-        .pre_ready => pid,
-        .group_ready => -pid,
-    };
-    std.posix.kill(target_pid, std.posix.SIG.KILL) catch |err| switch (err) {
-        error.ProcessNotFound => {},
-        else => debug_trace.logf(
-            "core",
-            "foreground session cleanup kill failed phase={s} err={s}",
-            .{ @tagName(phase), @errorName(err) },
-        ),
-    };
-    _ = child.wait(io_mod.getIo()) catch |err| {
-        debug_trace.logf(
-            "core",
-            "foreground session cleanup wait failed phase={s} err={s}",
-            .{ @tagName(phase), @errorName(err) },
-        );
-    };
+    foreground_session_cleanup.run(child, phase);
 }
 
 fn foregroundSessionReplacementError(
@@ -1526,6 +1508,9 @@ fn fallbackCommandArtifactDir(alloc: Allocator) ![]u8 {
 }
 
 fn currentProcessId() u64 {
+    if (comptime builtin.os.tag == .windows) {
+        return @intFromPtr(std.c.getpid());
+    }
     return @intCast(std.c.getpid());
 }
 
@@ -2587,27 +2572,89 @@ fn signalProcess(pid: std.posix.pid_t, signal: std.posix.SIG) !void {
 }
 
 fn signalProcessGroup(pid: std.posix.pid_t, signal: std.posix.SIG) !void {
-    return signalProcess(-pid, signal);
+    return process_group_signals.signalGroup(pid, signal);
 }
 
 fn terminateRemainingProcessGroup(pid: std.posix.pid_t) void {
-    signalProcessGroup(pid, std.posix.SIG.KILL) catch |err| {
-        debug_trace.logf(
-            "core",
-            "remaining captured process group cleanup failed err={s}",
-            .{@errorName(err)},
-        );
-    };
+    process_group_signals.terminateRemaining(pid);
 }
 
+const process_group_signals = if (os_compat.has_posix_signals) struct {
+    fn signalGroup(pid: std.posix.pid_t, signal: std.posix.SIG) !void {
+        return signalProcess(-pid, signal);
+    }
+
+    fn terminateRemaining(pid: std.posix.pid_t) void {
+        signalGroup(pid, std.posix.SIG.KILL) catch |err| {
+            debug_trace.logf(
+                "core",
+                "remaining captured process group cleanup failed err={s}",
+                .{@errorName(err)},
+            );
+        };
+    }
+
+    fn groupAlive(process_group_id: ?std.posix.pid_t) bool {
+        const pid = process_group_id orelse return false;
+        std.posix.kill(-pid, @enumFromInt(0)) catch |err| return switch (err) {
+            error.ProcessNotFound => false,
+            else => true,
+        };
+        return true;
+    }
+
+    fn cleanup(child: *std.process.Child) void {
+        const pid = child.id orelse return;
+        std.posix.kill(-pid, std.posix.SIG.KILL) catch |err| switch (err) {
+            error.ProcessNotFound => {},
+            else => debug_trace.logf("core", "command cleanup kill failed err={s}", .{@errorName(err)}),
+        };
+        _ = child.wait(io_mod.getIo()) catch |err| {
+            debug_trace.logf("core", "command cleanup wait failed err={s}", .{@errorName(err)});
+        };
+    }
+} else struct {
+    fn signalGroup(_: std.posix.pid_t, _: std.posix.SIG) !void {}
+    fn terminateRemaining(_: std.posix.pid_t) void {}
+    fn groupAlive(_: ?std.posix.pid_t) bool {
+        return false;
+    }
+    fn cleanup(child: *std.process.Child) void {
+        child.kill(io_mod.getIo());
+    }
+};
+
+const foreground_session_cleanup = if (supports_foreground_session) struct {
+    fn run(child: *std.process.Child, phase: ForegroundSessionPhase) void {
+        const pid = child.id orelse return;
+        const target_pid = switch (phase) {
+            .pre_ready => pid,
+            .group_ready => -pid,
+        };
+        std.posix.kill(target_pid, std.posix.SIG.KILL) catch |err| switch (err) {
+            error.ProcessNotFound => {},
+            else => debug_trace.logf(
+                "core",
+                "foreground session cleanup kill failed phase={s} err={s}",
+                .{ @tagName(phase), @errorName(err) },
+            ),
+        };
+        _ = child.wait(io_mod.getIo()) catch |err| {
+            debug_trace.logf(
+                "core",
+                "foreground session cleanup wait failed phase={s} err={s}",
+                .{ @tagName(phase), @errorName(err) },
+            );
+        };
+    }
+} else struct {
+    fn run(child: *std.process.Child, _: ForegroundSessionPhase) void {
+        cleanupChild(child);
+    }
+};
+
 fn remainingProcessGroupAlive(process_group_id: ?std.posix.pid_t) bool {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return false;
-    const pid = process_group_id orelse return false;
-    std.posix.kill(-pid, @enumFromInt(0)) catch |err| return switch (err) {
-        error.ProcessNotFound => false,
-        else => true,
-    };
-    return true;
+    return process_group_signals.groupAlive(process_group_id);
 }
 
 fn cleanupChild(child: *std.process.Child) void {
@@ -2615,18 +2662,7 @@ fn cleanupChild(child: *std.process.Child) void {
         closeChildPipes(child);
         return;
     }
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        child.kill(io_mod.getIo());
-        return;
-    }
-    const pid = child.id orelse return;
-    std.posix.kill(-pid, std.posix.SIG.KILL) catch |err| switch (err) {
-        error.ProcessNotFound => {},
-        else => debug_trace.logf("core", "command cleanup kill failed err={s}", .{@errorName(err)}),
-    };
-    _ = child.wait(io_mod.getIo()) catch |err| {
-        debug_trace.logf("core", "command cleanup wait failed err={s}", .{@errorName(err)});
-    };
+    process_group_signals.cleanup(child);
 }
 
 fn closeChildPipes(child: *std.process.Child) void {
