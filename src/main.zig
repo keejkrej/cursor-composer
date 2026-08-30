@@ -4066,6 +4066,8 @@ test {
     _ = @import("cursor/bridge.zig");
     _ = @import("cursor/client.zig");
     _ = @import("cursor/session.zig");
+    _ = @import("cursor/host_tools.zig");
+    _ = @import("cursor/tool_callback.zig");
     _ = @import("cursor/runtime.zig");
     _ = @import("cursor/turn.zig");
     _ = @import("core/auth/login_flow.zig");

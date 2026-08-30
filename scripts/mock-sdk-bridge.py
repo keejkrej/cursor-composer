@@ -41,6 +41,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path
         if path.endswith("/Ping"):
             self._unary({"message": "pong"})
+        elif path.endswith("/SetToolCallback"):
+            self._unary({})
         elif path.endswith("/CreateAgent"):
             self._unary({"agentId": AGENT_CREATE})
         elif path.endswith("/ResumeAgent"):

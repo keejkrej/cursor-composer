@@ -24,6 +24,8 @@ var pending_resume_owned: ?[]u8 = null;
 var resume_last: bool = false;
 var alloc_ref: Allocator = std.heap.c_allocator;
 var bridge_bin_owned: ?[]u8 = null;
+/// Optional host hook (tool callback server). Set by the Cursor turn path.
+pub var on_shutdown: ?*const fn () void = null;
 
 pub fn resolveApiKey() ?[]const u8 {
     return io_mod.getenv("CURSOR_API_KEY") orelse io_mod.getenv("AI_GATEWAY_API_KEY");
@@ -286,6 +288,10 @@ pub fn shutdown() void {
     const zio = io_mod.getIo();
     mutex.lockUncancelable(zio);
     defer mutex.unlock(zio);
+    if (on_shutdown) |hook| {
+        on_shutdown = null;
+        hook();
+    }
     if (client_mem) |client| client.shutdown();
     if (started) manager.stop();
     resetAgentLocked();

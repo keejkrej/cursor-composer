@@ -100,6 +100,7 @@ test "mock bridge create send stream resume and cancel" {
 
     const client = client_mod.Client.init(alloc, mock.url, "test-bridge-token", "test-cursor-key");
     try client.ping();
+    try client.setToolCallback("http://127.0.0.1:9", "callback-token");
 
     const created = try client.createAgent("/tmp/workspace", "composer-2.5");
     defer alloc.free(created);
@@ -122,7 +123,7 @@ test "mock bridge create send stream resume and cancel" {
                 saw_assistant = true;
             },
             .tool_started => |tool| {
-                try std.testing.expectEqualStrings("Read", tool.name);
+                try std.testing.expectEqualStrings("read_file", tool.name);
                 saw_tool = true;
             },
             else => {},

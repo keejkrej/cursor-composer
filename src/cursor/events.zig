@@ -1,5 +1,7 @@
 const std = @import("std");
+const types = @import("../core/shared/types.zig");
 const json_util = @import("json_util.zig");
+const host_tools = @import("host_tools.zig");
 
 /// Presentation actions the FX TUI already knows how to paint.
 /// Produced only from Cursor `sdk.v1` stream JSON — no agent loop.
@@ -27,21 +29,8 @@ pub const Action = union(enum) {
     ignore,
 };
 
-pub fn classifyToolActivity(name: []const u8) enum { read, list, write, edit, command } {
-    if (containsInsensitive(name, "read")) return .read;
-    if (containsInsensitive(name, "write")) return .write;
-    if (containsInsensitive(name, "edit") or containsInsensitive(name, "strreplace") or containsInsensitive(name, "apply")) return .edit;
-    if (containsInsensitive(name, "glob") or containsInsensitive(name, "grep") or containsInsensitive(name, "list") or containsInsensitive(name, "ls")) return .list;
-    return .command;
-}
-
-fn containsInsensitive(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len > haystack.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= haystack.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
-    }
-    return false;
+pub fn classifyToolActivity(name: []const u8) types.ToolActivityKind {
+    return host_tools.classifyActivity(name);
 }
 
 pub fn actionFromEnvelope(alloc: std.mem.Allocator, payload: []const u8) !Action {
@@ -110,7 +99,7 @@ fn actionFromSdkMessage(alloc: std.mem.Allocator, message: std.json.Value) !Acti
             }
             return .{ .tool_started = .{
                 .call_id = try alloc.dupe(u8, call_id),
-                .name = try alloc.dupe(u8, name),
+                .name = try alloc.dupe(u8, host_tools.canonicalName(name)),
                 .args_json = args_json,
             } };
         }
@@ -120,7 +109,7 @@ fn actionFromSdkMessage(alloc: std.mem.Allocator, message: std.json.Value) !Acti
         }
         return .{ .tool_finished = .{
             .call_id = try alloc.dupe(u8, call_id),
-            .name = try alloc.dupe(u8, name),
+            .name = try alloc.dupe(u8, host_tools.canonicalName(name)),
             .ok = !std.mem.eql(u8, status, "error"),
             .result_json = result_json,
         } };
@@ -193,7 +182,7 @@ test "tool_call running and completed map to lifecycle" {
         \\{"sdkMessage":{"type":"tool_call","call_id":"c1","name":"Read","status":"running","args":{"path":"a"}}}
     );
     defer freeAction(std.testing.allocator, start);
-    try std.testing.expectEqualStrings("Read", start.tool_started.name);
+    try std.testing.expectEqualStrings("read_file", start.tool_started.name);
     try std.testing.expectEqual(.read, classifyToolActivity(start.tool_started.name));
 
     const done = try actionFromEnvelope(std.testing.allocator,
@@ -201,6 +190,15 @@ test "tool_call running and completed map to lifecycle" {
     );
     defer freeAction(std.testing.allocator, done);
     try std.testing.expect(done.tool_finished.ok);
+}
+
+test "AskQuestion stream events map to ask_user_question" {
+    const start = try actionFromEnvelope(std.testing.allocator,
+        \\{"sdkMessage":{"type":"tool_call","call_id":"q1","name":"AskQuestion","status":"running","args":{"question":"Ship?"}}}
+    );
+    defer freeAction(std.testing.allocator, start);
+    try std.testing.expectEqualStrings("ask_user_question", start.tool_started.name);
+    try std.testing.expectEqual(.ask, classifyToolActivity(start.tool_started.name));
 }
 
 test "empty envelope is keepalive ignore" {
