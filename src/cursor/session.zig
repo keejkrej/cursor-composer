@@ -3,6 +3,7 @@ const io_mod = @import("../core/shared/io.zig");
 const bridge_mod = @import("bridge.zig");
 const client_mod = @import("client.zig");
 const paths = @import("paths.zig");
+const catalog = @import("catalog.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -71,14 +72,11 @@ pub fn resolveModel(preferred: []const u8) []const u8 {
 }
 
 pub fn chooseModel(preferred: []const u8, env_model: ?[]const u8) []const u8 {
+    // `/model` (and `--model`) win over CURSOR_MODEL so the FX picker can switch.
+    if (catalog.cursorModelId(preferred)) |id| return id;
     if (env_model) |model| {
+        if (catalog.cursorModelId(model)) |id| return id;
         if (model.len > 0) return model;
-    }
-    // FX defaults look like provider/model (moonshotai/kimi-k3). Cursor ids do not.
-    if (preferred.len > 0 and !std.mem.eql(u8, preferred, "auto") and
-        std.mem.indexOfScalar(u8, preferred, '/') == null)
-    {
-        return preferred;
     }
     return default_model;
 }
@@ -111,7 +109,6 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
 
         api_key_owned = try alloc.dupe(u8, api_key);
         workspace_owned = try alloc.dupe(u8, workspace);
-        model_owned = try alloc.dupe(u8, model);
         client_mem = client_mod.Client.init(alloc, endpoint.url, endpoint.token, api_key_owned.?);
         client_mem.?.ping() catch |err| {
             manager.stop();
@@ -131,12 +128,21 @@ pub fn ensure(alloc: Allocator, workspace: []const u8, preferred_model: []const 
         }
         persistLastAgentLocked(workspace, agent_id_owned.?) catch {};
     }
+    try adoptModelLocked(alloc, model);
 
     return .{
         .client = client,
         .agent_id = agent_id_owned.?,
         .model = model_owned orelse model,
     };
+}
+
+fn adoptModelLocked(alloc: Allocator, model: []const u8) !void {
+    if (model_owned) |old| {
+        if (std.mem.eql(u8, old, model)) return;
+        alloc.free(old);
+    }
+    model_owned = try alloc.dupe(u8, model);
 }
 
 const ResolvedResume = struct {
@@ -305,8 +311,12 @@ test "FX gateway model ids fall back to grok-4.6" {
     try std.testing.expectEqualStrings("grok-4.6", chooseModel("moonshotai/kimi-k3", null));
     try std.testing.expectEqualStrings("grok-4.6", chooseModel("auto", null));
     try std.testing.expectEqualStrings("grok-4.6", chooseModel("grok-4.6", null));
-    try std.testing.expectEqualStrings("composer-2.5", chooseModel("grok-4.6", "composer-2.5"));
-    try std.testing.expectEqualStrings("cursor-grok-4-6", chooseModel("auto", "cursor-grok-4-6"));
+}
+
+test "/model selection wins over CURSOR_MODEL" {
+    try std.testing.expectEqualStrings("composer-2.5", chooseModel("composer-2.5", "grok-4.6"));
+    try std.testing.expectEqualStrings("grok-4.6", chooseModel("cursor-grok-4-6", "composer-2.5"));
+    try std.testing.expectEqualStrings("composer-2.5", chooseModel("auto", "composer-2.5"));
 }
 
 test "persist and resume last agent id without a bridge" {

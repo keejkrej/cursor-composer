@@ -52,6 +52,8 @@ const builtin_commands = @import("builtins/commands.zig");
 const command_specs = @import("core/slash_commands/command_specs.zig");
 const builtin_context = @import("builtins/context.zig");
 const builtin_gateway = @import("builtins/gateway.zig");
+const cursor_session = @import("cursor/session.zig");
+const cursor_catalog = @import("cursor/catalog.zig");
 const builtin_providers = @import("builtins/providers.zig");
 const gateway_provider = @import("core/gateway/gateway_provider.zig");
 const provider_set = @import("core/gateway/provider_set.zig");
@@ -637,7 +639,7 @@ const App = struct {
         }
         app.shell.max_transcript_bytes = max_transcript_bytes;
         if (launch.requested_resume) |target| {
-            @import("cursor/session.zig").noteResumeFromTarget(target);
+            cursor_session.noteResumeFromTarget(target);
             app.requested_resume = target;
             launch.requested_resume = null;
         }
@@ -645,7 +647,7 @@ const App = struct {
         try BootstrapAppRuntime.bootstrap(
             &app,
             footer_rows,
-            builtin_gateway.default_model,
+            cursor_session.default_model,
             default_max_agent_steps,
             handle_sigwinch,
             launch.record_requested,
@@ -1900,8 +1902,8 @@ const App = struct {
             if (comptime host_target.is_wasm)
                 js_host_model_catalog.provider
             else
-                self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
-            builtin_gateway.models_path,
+                cursor_catalog.provider,
+                builtin_gateway.models_path,
         );
     }
 
@@ -1912,12 +1914,12 @@ const App = struct {
                 return;
             }
             self.model_cache.loadCooperative(
-                js_host_model_catalog.provider,
+                cursor_catalog.provider,
                 self.auth.modelCatalogAccess(),
             );
         } else {
             self.model_cache.startWarmup(
-                self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
+                cursor_catalog.provider,
                 self.auth.modelCatalogAccess(),
             );
         }
