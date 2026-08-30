@@ -1,20 +1,16 @@
 const std = @import("std");
 const types = @import("../core/shared/types.zig");
+const ask_question = @import("ask_question.zig");
 
 const Allocator = std.mem.Allocator;
 
-const ask_description =
-    "Ask the user 1-4 multiple-choice questions in the interactive cc TUI when a concrete decision blocks progress after local files, git state, or tool output cannot answer it.";
-
-const ask_input_schema =
-    \\{"type":"object","properties":{"questions":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","properties":{"question":{"type":"string","description":"Specific blocking decision shown to the user"},"options":{"type":"array","minItems":2,"maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label"]}}},"required":["question","options"]}}},"required":["questions"]}
-;
+/// Cursor-facing custom tool. The fx picker is an implementation detail.
+pub const advertised_name = ask_question.name;
 
 /// Tools the host executes. Cursor built-ins (Read/Write/Shell/…) stay in the
-/// bridge; these names are advertised so the model can reach the fx TUI.
+/// bridge; `AskQuestion` is advertised so the model can reach the TUI picker.
 pub const advertised = [_][]const u8{
-    "AskQuestion",
-    "ask_user_question",
+    advertised_name,
 };
 
 pub fn isQuestionTool(name: []const u8) bool {
@@ -53,47 +49,14 @@ pub fn classifyActivity(name: []const u8) types.ToolActivityKind {
 
 /// JSON object for `LocalAgentOptions.custom_tools`.
 pub fn customToolsJson(alloc: Allocator) ![]u8 {
+    const entry = try ask_question.definitionJson(alloc);
+    defer alloc.free(entry);
+
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     try out.writer.writeByte('{');
-    for (advertised, 0..) |name, index| {
-        if (index > 0) try out.writer.writeByte(',');
-        try std.json.Stringify.value(name, .{}, &out.writer);
-        try out.writer.writeAll(":{\"description\":");
-        try std.json.Stringify.value(ask_description, .{}, &out.writer);
-        try out.writer.writeAll(",\"inputSchema\":");
-        try out.writer.writeAll(ask_input_schema);
-        try out.writer.writeByte('}');
-    }
+    try out.writer.writeAll(entry);
     try out.writer.writeByte('}');
-    return out.toOwnedSlice();
-}
-
-/// Rewrites Cursor-style or shorthand question args into fx `{questions:[…]}`.
-pub fn normalizeQuestionArgs(alloc: Allocator, args_json: []const u8) ![]u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, alloc, args_json, .{}) catch
-        return alloc.dupe(u8, args_json);
-    defer parsed.deinit();
-    if (parsed.value != .object) return alloc.dupe(u8, args_json);
-
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    try out.writer.writeAll("{\"questions\":[");
-
-    if (parsed.value.object.get("questions")) |questions| {
-        if (questions != .array) return alloc.dupe(u8, args_json);
-        for (questions.array.items, 0..) |item, index| {
-            if (index > 0) try out.writer.writeByte(',');
-            writeNormalizedQuestion(&out.writer, item) catch return alloc.dupe(u8, args_json);
-        }
-    } else if (parsed.value.object.get("question")) |question| {
-        writeNormalizedQuestion(&out.writer, parsed.value) catch return alloc.dupe(u8, args_json);
-        _ = question;
-    } else {
-        return alloc.dupe(u8, args_json);
-    }
-
-    try out.writer.writeAll("]}");
     return out.toOwnedSlice();
 }
 
@@ -111,47 +74,6 @@ pub fn wrapCustomToolResult(alloc: Allocator, body: []const u8) ![]u8 {
     try std.json.Stringify.value(trimmed, .{}, &out.writer);
     try out.writer.writeByte('}');
     return out.toOwnedSlice();
-}
-
-fn writeNormalizedQuestion(writer: *std.Io.Writer, value: std.json.Value) !void {
-    if (value != .object) return error.InvalidArguments;
-    const question = switch (value.object.get("question") orelse return error.InvalidArguments) {
-        .string => |text| text,
-        else => return error.InvalidArguments,
-    };
-    const options = value.object.get("options") orelse return error.InvalidArguments;
-    if (options != .array) return error.InvalidArguments;
-
-    try writer.writeAll("{\"question\":");
-    try std.json.Stringify.value(question, .{}, writer);
-    try writer.writeAll(",\"options\":[");
-    for (options.array.items, 0..) |option, index| {
-        if (index > 0) try writer.writeByte(',');
-        switch (option) {
-            .string => |label| {
-                try writer.writeAll("{\"label\":");
-                try std.json.Stringify.value(label, .{}, writer);
-                try writer.writeByte('}');
-            },
-            .object => {
-                const label = switch (option.object.get("label") orelse return error.InvalidArguments) {
-                    .string => |text| text,
-                    else => return error.InvalidArguments,
-                };
-                try writer.writeAll("{\"label\":");
-                try std.json.Stringify.value(label, .{}, writer);
-                if (option.object.get("description")) |desc| {
-                    if (desc == .string) {
-                        try writer.writeAll(",\"description\":");
-                        try std.json.Stringify.value(desc.string, .{}, writer);
-                    }
-                }
-                try writer.writeByte('}');
-            },
-            else => return error.InvalidArguments,
-        }
-    }
-    try writer.writeAll("]}");
 }
 
 fn eqlAny(name: []const u8, candidates: []const []const u8) bool {
@@ -177,29 +99,28 @@ test "Cursor built-in names map to fx tools" {
     try std.testing.expectEqual(types.ToolActivityKind.command, classifyActivity("Shell"));
 }
 
-test "custom tools JSON advertises both AskQuestion names" {
+test "custom tools JSON advertises Cursor AskQuestion schema only" {
     const json = try customToolsJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
+
+    try std.testing.expectEqual(@as(usize, 1), advertised.len);
+    try std.testing.expectEqualStrings(advertised_name, advertised[0]);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"AskQuestion\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"ask_user_question\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"inputSchema\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"ask_user_question\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"prompt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"allowMultiple\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, ask_question.description) != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "When NOT to use") == null);
     {
         const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json, .{});
         defer parsed.deinit();
+        try std.testing.expectEqual(@as(usize, 1), parsed.value.object.count());
+        const tool = parsed.value.object.get("AskQuestion").?;
+        try std.testing.expectEqualStrings(ask_question.description, tool.object.get("description").?.string);
+        const schema = tool.object.get("inputSchema").?.object;
+        try std.testing.expect(schema.get("properties").?.object.get("questions") != null);
+        try std.testing.expect(schema.get("properties").?.object.get("title") != null);
     }
-}
-
-test "normalize accepts string options and a single question" {
-    const alloc = std.testing.allocator;
-    const out = try normalizeQuestionArgs(
-        alloc,
-        "{\"question\":\"Ship it?\",\"options\":[\"Yes\",\"No\"]}",
-    );
-    defer alloc.free(out);
-    try std.testing.expectEqualStrings(
-        "{\"questions\":[{\"question\":\"Ship it?\",\"options\":[{\"label\":\"Yes\"},{\"label\":\"No\"}]}]}",
-        out,
-    );
 }
 
 test "wrapCustomToolResult boxes arrays and sentinels" {

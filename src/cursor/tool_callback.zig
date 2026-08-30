@@ -6,6 +6,7 @@ const tool_dispatch = @import("../core/tooling/tool_dispatch.zig");
 const core_types = @import("../core/shared/types.zig");
 const json_util = @import("json_util.zig");
 const host_tools = @import("host_tools.zig");
+const ask_question = @import("ask_question.zig");
 
 const Allocator = std.mem.Allocator;
 const WorkerRuntime = worker_runtime.WorkerRuntime;
@@ -400,8 +401,8 @@ fn executeNamedTool(alloc: Allocator, name: []const u8, args_json: []const u8) !
 }
 
 fn executeQuestion(alloc: Allocator, args_json: []const u8) ![]u8 {
-    const normalized = try host_tools.normalizeQuestionArgs(alloc, args_json);
-    defer alloc.free(normalized);
+    const fx_args = try ask_question.toFxArgs(alloc, args_json);
+    defer alloc.free(fx_args);
     const bind = snapshotBind();
     const requester: ask_user_question.Requester = if (bind.request) |request_fn|
         .{
@@ -416,11 +417,11 @@ fn executeQuestion(alloc: Allocator, args_json: []const u8) ![]u8 {
             .request = requestViaWorker,
         }
     else
-        return host_tools.wrapCustomToolResult(alloc, ask_user_question.not_available_sentinel);
+        return ask_question.encodeResult(alloc, args_json, ask_user_question.not_available_sentinel);
 
-    const body = try ask_user_question.executeWithRequester(alloc, normalized, requester);
+    const body = try ask_user_question.executeWithRequester(alloc, fx_args, requester);
     defer alloc.free(body);
-    return host_tools.wrapCustomToolResult(alloc, body);
+    return ask_question.encodeResult(alloc, args_json, body);
 }
 
 fn requestViaWorker(
@@ -568,13 +569,14 @@ test "CallCustomTool AskQuestion returns answers object" {
     defer bindHost(.{});
 
     const payload =
-        \\{"toolName":"AskQuestion","args":{"question":"Ship it?","options":["Yes","No"]}}
+        \\{"toolName":"AskQuestion","args":{"questions":[{"id":"q1","prompt":"Ship it?","options":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}]}]}}
     ;
     const response = try postCall(alloc, ep.url, ep.token, payload, false);
     defer alloc.free(response.body);
     try std.testing.expectEqual(@as(u16, 200), response.status);
-    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"answers\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"Yes\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"outcome\":\"answered\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"questionId\":\"q1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"yes\"") != null);
 }
 
 test "CallCustomTool rejects a missing bearer token" {
@@ -595,27 +597,27 @@ test "CallCustomTool accepts chunked AskQuestion bodies" {
     defer bindHost(.{});
 
     const payload =
-        \\{"tool_name":"ask_user_question","args":{"questions":[{"question":"Go?","options":[{"label":"Yes"},{"label":"No"}]}]}}
+        \\{"tool_name":"AskQuestion","args":{"questions":[{"id":"go","prompt":"Go?","options":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}]}]}}
     ;
     const response = try postCall(alloc, ep.url, ep.token, payload, true);
     defer alloc.free(response.body);
     try std.testing.expectEqual(@as(u16, 200), response.status);
-    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"answers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"outcome\":\"answered\"") != null);
 }
 
-test "CallCustomTool headless AskQuestion returns the interactive sentinel" {
+test "CallCustomTool headless AskQuestion returns skipped" {
     const alloc = std.testing.allocator;
     const ep = try start(alloc);
     defer stop();
     bindHost(.{});
 
     const payload =
-        \\{"toolName":"AskQuestion","args":{"questions":[{"question":"Go?","options":[{"label":"Yes"},{"label":"No"}]}]}}
+        \\{"toolName":"AskQuestion","args":{"questions":[{"id":"go","prompt":"Go?","options":[{"id":"yes","label":"Yes"},{"id":"no","label":"No"}]}]}}
     ;
     const response = try postCall(alloc, ep.url, ep.token, payload, false);
     defer alloc.free(response.body);
     try std.testing.expectEqual(@as(u16, 200), response.status);
-    try std.testing.expect(std.mem.indexOf(u8, response.body, "interactive shell") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response.body, "\"outcome\":\"skipped\"") != null);
 }
 
 test "unknown custom tool stays an object result" {

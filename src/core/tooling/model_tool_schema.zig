@@ -154,6 +154,14 @@ pub fn dynamicFunctionSchemaJsonAlloc(
     return try out.toOwnedSlice();
 }
 
+/// Caller owns the returned JSON object schema.
+pub fn objectSchemaJsonAlloc(alloc: std.mem.Allocator, schema: ObjectSchema) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    try writeObjectSchema(alloc, &out.writer, schema);
+    return out.toOwnedSlice();
+}
+
 pub fn writeObjectSchema(
     alloc: std.mem.Allocator,
     writer: *std.Io.Writer,
@@ -282,6 +290,20 @@ fn writePropertySchema(
         }
     }
     try writer.writeByte('}');
+}
+
+test "objectSchemaJsonAlloc matches writeObjectSchema" {
+    const alloc = std.testing.allocator;
+    const schema = ObjectSchema{
+        .properties = &.{.{ .name = "id", .json_type = .string }},
+        .required = &.{"id"},
+    };
+    const json = try objectSchemaJsonAlloc(alloc, schema);
+    defer alloc.free(json);
+    try std.testing.expectEqualStrings(
+        "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]}",
+        json,
+    );
 }
 
 test "nullable properties preserve concrete constraints and add one null branch" {

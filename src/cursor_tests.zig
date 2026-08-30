@@ -8,5 +8,6 @@ comptime {
     _ = @import("cursor/paths.zig");
     _ = @import("cursor/session.zig");
     _ = @import("cursor/host_tools.zig");
+    _ = @import("cursor/ask_question.zig");
     _ = @import("cursor/integration.zig");
 }

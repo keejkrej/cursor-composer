@@ -1,5 +1,13 @@
 # fx
 
+## 0.2.2
+
+**Advertise Cursor's native `AskQuestion` schema; convert to the fx picker only inside `cc`.**
+
+### Improvements
+
+- **Host questions**: `CreateAgent` advertises one `custom_tools` entry named `AskQuestion` with Cursor's `id` / `prompt` / `options[{id,label}]` / `allowMultiple` schema. The callback converts that payload into the fx question picker and returns `{outcome, answers:[{questionId, selectedOptionIds}]}`. Nothing fx-specific is advertised.
+
 ## 0.2.1
 
 **Fix CreateAgent `failed_precondition` when advertising AskQuestion: register the host tool callback before create/resume.**
