@@ -52,6 +52,17 @@ fn processQueuedPromptInner(
     const workspace = if (config.workspace_root.len > 0) config.workspace_root else ".";
     const resume_hint = session.peekResumeId(std.heap.c_allocator, workspace);
     defer if (resume_hint) |id| std.heap.c_allocator.free(id);
+    session.prepare_host_callback = struct {
+        fn prepare() void {
+            session.on_shutdown = struct {
+                fn stopCallback() void {
+                    tool_callback.stop();
+                }
+            }.stopCallback;
+            const callback = tool_callback.ensure(std.heap.c_allocator) catch return;
+            session.noteHostCallback(callback.url, callback.token);
+        }
+    }.prepare;
     const handle = session.ensure(
         std.heap.c_allocator,
         workspace,
@@ -70,8 +81,6 @@ fn processQueuedPromptInner(
         try deps.push_system_notice(deps.ctx, message);
         return err;
     };
-
-    registerHostTools(handle.client);
 
     var stream = StreamState{
         .alloc = std.heap.c_allocator,
@@ -202,14 +211,4 @@ fn present(stream: *StreamState, action: events.Action) !void {
             } });
         },
     }
-}
-
-fn registerHostTools(client: client_mod.Client) void {
-    session.on_shutdown = struct {
-        fn stopCallback() void {
-            tool_callback.stop();
-        }
-    }.stopCallback;
-    const callback = tool_callback.ensure(std.heap.c_allocator) catch return;
-    client.setToolCallback(callback.url, callback.token) catch {};
 }

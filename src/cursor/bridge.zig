@@ -35,6 +35,11 @@ pub const Endpoint = struct {
     }
 };
 
+pub const ToolCallback = struct {
+    url: []const u8,
+    token: []const u8,
+};
+
 pub const Manager = struct {
     alloc: Allocator,
     child: ?std.process.Child = null,
@@ -55,7 +60,13 @@ pub const Manager = struct {
         return endpoint;
     }
 
-    pub fn start(self: *Manager, binary: []const u8, workspace: []const u8, api_key: ?[]const u8) !Endpoint {
+    pub fn start(
+        self: *Manager,
+        binary: []const u8,
+        workspace: []const u8,
+        api_key: ?[]const u8,
+        tool_callback: ?ToolCallback,
+    ) !Endpoint {
         if (self.endpoint) |existing| return existing;
 
         const zio = io_mod.getIo();
@@ -64,8 +75,27 @@ pub const Manager = struct {
         try env_map.put("CURSOR_SDK_CLIENT_LANGUAGE", "zig");
         if (api_key) |key| try env_map.put("CURSOR_API_KEY", key);
 
+        var argv_buf: [7][]const u8 = undefined;
+        var argv_len: usize = 0;
+        argv_buf[argv_len] = binary;
+        argv_len += 1;
+        argv_buf[argv_len] = "--workspace";
+        argv_len += 1;
+        argv_buf[argv_len] = workspace;
+        argv_len += 1;
+        if (tool_callback) |callback| {
+            argv_buf[argv_len] = "--tool-callback-url";
+            argv_len += 1;
+            argv_buf[argv_len] = callback.url;
+            argv_len += 1;
+            argv_buf[argv_len] = "--tool-callback-auth-token";
+            argv_len += 1;
+            argv_buf[argv_len] = callback.token;
+            argv_len += 1;
+        }
+
         var child = std.process.spawn(zio, .{
-            .argv = &.{ binary, "--workspace", workspace },
+            .argv = argv_buf[0..argv_len],
             .stdin = .ignore,
             .stdout = .ignore,
             .stderr = .pipe,
