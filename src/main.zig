@@ -3007,6 +3007,8 @@ pub fn runWasmTerminal(init: std.process.Init) !void {
 }
 
 pub fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
+    os_compat.enableUtf8Console();
+    defer os_compat.restoreUtf8Console();
     mainC(c_argc, c_argv, c_envp) catch return 1;
     return 0;
 }
@@ -3178,7 +3180,7 @@ fn runNonBenchmark(raw_args: []const [*:0]const u8, raw_env: RawEnviron, cli_arg
             const outcome = try app_entry_runtime.runInteractive(App, alloc, &owned_launch);
             switch (outcome) {
                 .returned => return,
-                .exit => |code| std.process.exit(code),
+                .exit => |code| exitFast(code),
             }
         },
         .returned => exitFast(0),
@@ -3348,6 +3350,7 @@ fn writeStderrFast(text: []const u8) !void {
 }
 
 fn exitFast(code: u8) noreturn {
+    os_compat.restoreUtf8Console();
     if (comptime builtin.link_libc and builtin.os.tag != .windows and builtin.os.tag != .wasi) {
         std.c._exit(@intCast(code));
     }

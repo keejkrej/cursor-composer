@@ -87,11 +87,60 @@ pub fn read(handle: std.posix.fd_t, buf: []u8) !usize {
     return read_count;
 }
 
+/// Windows UTF-8 console code page. OEM pages such as CP437 decode the TUI's
+/// UTF-8 banner (`𝒇x`, `·`, `⚠`) as mojibake (`≡¥Æçx`, `┬┐`, `ΓùÅ`).
+const utf8_code_page: u32 = 65001;
+
+const CodePageSnapshot = struct {
+    input: u32 = 0,
+    output: u32 = 0,
+
+    fn isAttached(self: CodePageSnapshot) bool {
+        return self.input != 0 or self.output != 0;
+    }
+};
+
+const CodePageSession = struct {
+    original: CodePageSnapshot = .{},
+    active: bool = false,
+
+    fn enable(self: *CodePageSession, current: CodePageSnapshot) ?CodePageSnapshot {
+        if (self.active or !current.isAttached()) return null;
+        self.original = current;
+        self.active = true;
+        return .{ .input = utf8_code_page, .output = utf8_code_page };
+    }
+
+    fn takeRestore(self: *CodePageSession) ?CodePageSnapshot {
+        if (!self.active) return null;
+        const original = self.original;
+        self.* = .{};
+        return original;
+    }
+};
+
+var process_code_pages = CodePageSession{};
+
+/// Interpret console bytes as UTF-8 for the rest of this process. No-op when
+/// stdout is not a Windows console. Safe to call more than once.
+pub fn enableUtf8Console() void {
+    if (comptime !is_windows) return;
+    applyCodePages(process_code_pages.enable(readCodePages()) orelse return);
+}
+
+/// Restore the console code pages captured by `enableUtf8Console`. Safe to call
+/// when UTF-8 was never enabled or after a previous restore.
+pub fn restoreUtf8Console() void {
+    if (comptime !is_windows) return;
+    applyCodePages(process_code_pages.takeRestore() orelse return);
+}
+
 pub const ConsoleState = struct {
     in_handle: std.posix.fd_t,
     out_handle: std.posix.fd_t,
     original_in: std.os.windows.DWORD = 0,
     original_out: std.os.windows.DWORD = 0,
+    code_pages: CodePageSession = .{},
     active: bool = false,
 };
 
@@ -134,6 +183,7 @@ pub fn enableRawConsole(state: *ConsoleState) !void {
         _ = kernel32.SetConsoleMode(state.in_handle, state.original_in);
         return error.NotATerminal;
     }
+    if (state.code_pages.enable(readCodePages())) |pages| applyCodePages(pages);
     state.active = true;
 }
 
@@ -141,6 +191,7 @@ pub fn restoreConsole(state: *ConsoleState) void {
     if (!state.active) return;
     _ = kernel32.SetConsoleMode(state.in_handle, state.original_in);
     _ = kernel32.SetConsoleMode(state.out_handle, state.original_out);
+    if (state.code_pages.takeRestore()) |pages| applyCodePages(pages);
     state.active = false;
 }
 
@@ -292,7 +343,26 @@ const kernel32 = struct {
     pub extern "kernel32" fn GetProcessId(
         handle: std.os.windows.HANDLE,
     ) callconv(.winapi) std.os.windows.DWORD;
+
+    pub extern "kernel32" fn GetConsoleCP() callconv(.winapi) u32;
+    pub extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) u32;
+    pub extern "kernel32" fn SetConsoleCP(code_page: u32) callconv(.winapi) std.os.windows.BOOL;
+    pub extern "kernel32" fn SetConsoleOutputCP(code_page: u32) callconv(.winapi) std.os.windows.BOOL;
 };
+
+fn readCodePages() CodePageSnapshot {
+    if (comptime !is_windows) return .{};
+    return .{
+        .input = kernel32.GetConsoleCP(),
+        .output = kernel32.GetConsoleOutputCP(),
+    };
+}
+
+fn applyCodePages(pages: CodePageSnapshot) void {
+    if (comptime !is_windows) return;
+    _ = kernel32.SetConsoleCP(pages.input);
+    _ = kernel32.SetConsoleOutputCP(pages.output);
+}
 
 const ws2_32 = struct {
     pub extern "ws2_32" fn WSAPoll(
@@ -363,4 +433,46 @@ fn pollSockets(fds: []pollfd, timeout_ms: i32) PollError!usize {
     const rc = ws2_32.WSAPoll(fds.ptr, @intCast(fds.len), timeout_ms);
     if (rc >= 0) return @intCast(rc);
     return error.Unexpected;
+}
+
+test "utf8 console code page is Windows CP_UTF8" {
+    try std.testing.expectEqual(@as(u32, 65001), utf8_code_page);
+}
+
+test "code page session switches an OEM console to UTF-8 and restores it" {
+    var session = CodePageSession{};
+    const oem = CodePageSnapshot{ .input = 437, .output = 437 };
+
+    const enabled = session.enable(oem) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(utf8_code_page, enabled.input);
+    try std.testing.expectEqual(utf8_code_page, enabled.output);
+    try std.testing.expect(session.active);
+    try std.testing.expectEqual(@as(?CodePageSnapshot, null), session.enable(oem));
+
+    const restored = session.takeRestore() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(oem.input, restored.input);
+    try std.testing.expectEqual(oem.output, restored.output);
+    try std.testing.expect(!session.active);
+    try std.testing.expectEqual(@as(?CodePageSnapshot, null), session.takeRestore());
+}
+
+test "code page session ignores a detached console and a second enable" {
+    var session = CodePageSession{};
+    try std.testing.expectEqual(@as(?CodePageSnapshot, null), session.enable(.{}));
+    try std.testing.expect(!session.active);
+
+    const utf8 = CodePageSnapshot{ .input = utf8_code_page, .output = utf8_code_page };
+    const enabled = session.enable(utf8) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(utf8_code_page, enabled.input);
+    try std.testing.expectEqual(utf8_code_page, enabled.output);
+
+    const restored = session.takeRestore() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(utf8_code_page, restored.input);
+    try std.testing.expectEqual(utf8_code_page, restored.output);
+}
+
+test "utf8 console wrappers are safe when no Windows console is attached" {
+    enableUtf8Console();
+    restoreUtf8Console();
+    restoreUtf8Console();
 }
