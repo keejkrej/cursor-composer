@@ -28,19 +28,19 @@ jobs:
       matrix:
         include:
           - target: x86_64-linux-musl
-            asset: cc-linux-x64
+            asset: cursor-composer-linux-x64
             archive: tar.gz
           - target: aarch64-linux-musl
-            asset: cc-linux-arm64
+            asset: cursor-composer-linux-arm64
             archive: tar.gz
           - target: x86_64-macos
-            asset: cc-darwin-x64
+            asset: cursor-composer-darwin-x64
             archive: tar.gz
           - target: aarch64-macos
-            asset: cc-darwin-arm64
+            asset: cursor-composer-darwin-arm64
             archive: tar.gz
           - target: x86_64-windows
-            asset: cc-windows-x64
+            asset: cursor-composer-windows-x64
             archive: zip
           # cursor-sdk-bridge v1.0.30 has no win32-arm64 build. ARM64 Windows
           # installs the x64 zip (WOW64/x64 emulation).
@@ -72,7 +72,7 @@ jobs:
         run: |
           chmod +x install
           cp install install.ps1 dist/
-          (cd dist && sha256sum cc-*.tar.gz cc-*.zip install install.ps1 > SHA256SUMS)
+          (cd dist && sha256sum cursor-composer-*.tar.gz cursor-composer-*.zip install install.ps1 > SHA256SUMS)
           ls -la dist
       - name: Publish GitHub release
         env:
@@ -93,7 +93,7 @@ jobs:
           irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex
           \`\`\`
 
-          Then set \`CURSOR_API_KEY\` and run \`cc\`.
+          Then set \`CURSOR_API_KEY\` and run \`cursor-composer\`.
           EOF
           extra=()
           if [[ "$PRERELEASE" == "true" ]]; then

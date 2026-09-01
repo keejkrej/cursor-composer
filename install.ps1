@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Install cc (Cursor Composer) and the Cursor SDK Bridge.
+# Install cursor-composer and the Cursor SDK Bridge.
 #
 #   irm https://github.com/keejkrej/cursor-composer/releases/latest/download/install.ps1 | iex
 #
@@ -50,8 +50,8 @@ function Find-Payload([string]$Root, [string]$Name) {
 }
 
 $arch = Get-ArchName
-$filename = "cc-windows-$arch.zip"
-$work = Join-Path ([System.IO.Path]::GetTempPath()) ("cc-install-" + [guid]::NewGuid().ToString("N"))
+$filename = "cursor-composer-windows-$arch.zip"
+$work = Join-Path ([System.IO.Path]::GetTempPath()) ("cursor-composer-install-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $work | Out-Null
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
@@ -83,7 +83,7 @@ try {
 
     $unpacked = Join-Path $work "unpacked"
     Expand-Archive -Path $archive -DestinationPath $unpacked -Force
-    $ccSrc = Find-Payload $unpacked "cc"
+    $ccSrc = Find-Payload $unpacked "cursor-composer"
     $bridgeSrc = Find-Payload $unpacked "cursor-sdk-bridge"
     Copy-Item $ccSrc (Join-Path $InstallDir (Split-Path $ccSrc -Leaf)) -Force
     Copy-Item $bridgeSrc (Join-Path $InstallDir (Split-Path $bridgeSrc -Leaf)) -Force
@@ -103,8 +103,8 @@ if ($env:CC_SKIP_PATH -ne "1") {
     }
 }
 
-Write-Host "Installed $(Join-Path $InstallDir 'cc.exe')"
+Write-Host "Installed $(Join-Path $InstallDir 'cursor-composer.exe')"
 Write-Host "Installed $(Join-Path $InstallDir 'cursor-sdk-bridge.exe')"
 Write-Host ""
 Write-Host "Set CURSOR_API_KEY, then run:"
-Write-Host "  cc"
+Write-Host "  cursor-composer"

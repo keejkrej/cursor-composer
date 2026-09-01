@@ -1,10 +1,10 @@
 # cursor-composer
 
-FX-style terminal UI for Cursor agents. The installable binary is **`cc`** (Cursor Composer). The TUI is **copied from [Vercel fx](https://github.com/vercel-labs/fx)** (Zig). The agent loop is **not** implemented here — create, send, stream, wait, and cancel go to Cursor through the [SDK Bridge](https://cursor.com/docs/sdk/bridge).
+FX-style terminal UI for Cursor agents. The installable binary is **`cursor-composer`**. The TUI is **copied from [Vercel fx](https://github.com/vercel-labs/fx)** (Zig). The agent loop is **not** implemented here — create, send, stream, wait, and cancel go to Cursor through the [SDK Bridge](https://cursor.com/docs/sdk/bridge).
 
 ```text
 ┌──────────────────────┐   Connect/JSON sdk.v1   ┌────────────────────┐   HTTPS   ┌────────────┐
-│  cc (Cursor Composer)│ ──────────────────────► │  cursor-sdk-bridge │ ────────► │ Cursor API │
+│  cursor-composer     │ ──────────────────────► │  cursor-sdk-bridge │ ────────► │ Cursor API │
 │  (fx Zig UI, copied) │ ◄────────────────────── │  (local process)   │           │            │
 └──────────────────────┘                         └────────────────────┘           └────────────┘
 ```
@@ -23,11 +23,11 @@ Windows (PowerShell):
 irm https://github.com/keejkrej/cursor-composer/releases/latest/download/install.ps1 | iex
 ```
 
-That installs `cc` and `cursor-sdk-bridge` into `~/.cc/bin`. Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.2.3`. Then:
+That installs `cursor-composer` and `cursor-sdk-bridge` into `~/.cc/bin`. Override with `CC_INSTALL_DIR` or `XDG_BIN_DIR`. Pin a release with `CC_VERSION=0.2.4`. Then:
 
 ```bash
 export CURSOR_API_KEY="your-key"
-cc
+cursor-composer
 ```
 
 GitHub publishes archives for linux-x64/arm64, darwin-x64/arm64, and windows-x64 on each `v*` tag (or via the Release workflow dispatch). ARM64 Windows installs the x64 zip until Cursor publishes a win32-arm64 SDK bridge. After a release exists, the installer above downloads it.
@@ -47,7 +47,7 @@ cd cursor-composer
 ./scripts/fetch-bridge.sh 1.0.30
 export CURSOR_API_KEY="your-key"
 zig build -Doptimize=ReleaseSafe
-./zig-out/bin/cc
+./zig-out/bin/cursor-composer
 ```
 
 Requires Zig 0.16.0+.
@@ -58,15 +58,15 @@ Create vs resume:
 
 ```bash
 # New Cursor agent (CreateAgent). The agent id is stored in .cursor-composer/last-agent.
-./zig-out/bin/cc
+./zig-out/bin/cursor-composer
 
 # Resume the last Cursor agent for this workspace
-./zig-out/bin/cc --resume last
-./zig-out/bin/cc ask --resume last "continue from the previous turn"
+./zig-out/bin/cursor-composer --resume last
+./zig-out/bin/cursor-composer ask --resume last "continue from the previous turn"
 
 # Resume a specific Cursor agent id
-./zig-out/bin/cc --resume bc-your-agent-id
-CURSOR_AGENT_ID=bc-your-agent-id ./zig-out/bin/cc
+./zig-out/bin/cursor-composer --resume bc-your-agent-id
+CURSOR_AGENT_ID=bc-your-agent-id ./zig-out/bin/cursor-composer
 
 # /resume in the TUI resumes the last Cursor agent; /new starts a new one
 ```
@@ -74,7 +74,7 @@ CURSOR_AGENT_ID=bc-your-agent-id ./zig-out/bin/cc
 One-shot:
 
 ```bash
-./zig-out/bin/cc ask "explain the changes in this repository"
+./zig-out/bin/cursor-composer ask "explain the changes in this repository"
 ```
 
 ## What this process owns
@@ -89,7 +89,7 @@ One-shot:
 - The agent loop, built-in tools (`Read`, `Write`, `Shell`, `Grep`, `Glob`, `WebSearch`, `WebFetch`, `Task`), planning, and file edits
 - Run streaming, cancellation, and usage
 
-The TUI maps those Cursor tool names onto fx activity kinds so the transcript looks like the original shell. `AskQuestion` is the host exception: `cc` advertises Cursor's native AskQuestion schema (`id` / `prompt` / `options[{id,label}]` / `allowMultiple`) as `custom_tools`, converts inbound args into the fx question picker, and returns Cursor's `{outcome, answers:[{questionId, selectedOptionIds}]}` object. Headless `cc ask` returns `{outcome:"skipped"}` instead of blocking. Other host-only fx tools (memory, skills, MCP) stay unwired — they cannot run inside Cursor's loop.
+The TUI maps those Cursor tool names onto fx activity kinds so the transcript looks like the original shell. `AskQuestion` is the host exception: `cursor-composer` advertises Cursor's native AskQuestion schema (`id` / `prompt` / `options[{id,label}]` / `allowMultiple`) as `custom_tools`, converts inbound args into the fx question picker, and returns Cursor's `{outcome, answers:[{questionId, selectedOptionIds}]}` object. Headless `cursor-composer ask` returns `{outcome:"skipped"}` instead of blocking. Other host-only fx tools (memory, skills, MCP) stay unwired — they cannot run inside Cursor's loop.
 
 ## Bridge
 
@@ -102,7 +102,7 @@ Environment:
 | `CURSOR_API_KEY` | Cursor API key (also accepted as `AI_GATEWAY_API_KEY` so the fx auth gate unlocks) |
 | `CURSOR_MODEL` | Fallback model when `/model` has not picked a Cursor id (default `grok-4.6`) |
 | `CURSOR_AGENT_ID` | Resume this Cursor agent instead of creating one |
-| `CURSOR_SDK_BRIDGE_BIN` | Path to `cursor-sdk-bridge` (otherwise `cc` looks next to itself, then `~/.cc/bin`, then `cursor-sdk-bridge/bin/cursor-sdk-bridge`) |
+| `CURSOR_SDK_BRIDGE_BIN` | Path to `cursor-sdk-bridge` (otherwise `cursor-composer` looks next to itself, then `~/.cc/bin`, then `cursor-sdk-bridge/bin/cursor-sdk-bridge`) |
 | `CURSOR_SDK_BRIDGE_URL` + `CURSOR_SDK_BRIDGE_TOKEN` | Attach to an already-running bridge |
 
 ## Build

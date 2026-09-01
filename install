@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install cc (Cursor Composer) and the Cursor SDK Bridge.
+# Install cursor-composer and the Cursor SDK Bridge.
 #
 #   curl -fsSL https://github.com/keejkrej/cursor-composer/releases/latest/download/install | bash
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 REPO="${CC_REPO:-keejkrej/cursor-composer}"
-APP_NAME="cc"
+APP_NAME="cursor-composer"
 DEFAULT_HOME_BIN="${HOME:-}/.cc/bin"
 
 RED='\033[0;31m'
@@ -172,7 +172,7 @@ add_to_path() {
   if [[ -w "${config_file%/*}" ]] || [[ -w "$config_file" ]]; then
     mkdir -p "$(dirname "$config_file")"
     {
-      printf '\n# cc (Cursor Composer)\n'
+      printf '\n# cursor-composer\n'
       printf '%s\n' "$line"
     } >> "$config_file"
     info "Added ${install_dir} to PATH in ${config_file}"
@@ -206,21 +206,21 @@ main() {
   fi
 
   extract_archive "$archive" "${work}/unpacked"
-  local cc_src bridge_src
-  cc_src="$(find_payload "${work}/unpacked" cc)"
+  local app_src bridge_src
+  app_src="$(find_payload "${work}/unpacked" cursor-composer)"
   bridge_src="$(find_payload "${work}/unpacked" cursor-sdk-bridge)"
 
-  local cc_name bridge_name
-  cc_name="$(basename "$cc_src")"
+  local app_name bridge_name
+  app_name="$(basename "$app_src")"
   bridge_name="$(basename "$bridge_src")"
-  install -m 0755 "$cc_src" "${install_dir}/${cc_name}"
+  install -m 0755 "$app_src" "${install_dir}/${app_name}"
   install -m 0755 "$bridge_src" "${install_dir}/${bridge_name}"
 
   add_to_path "$install_dir"
 
-  info "Installed ${install_dir}/${cc_name}"
+  info "Installed ${install_dir}/${app_name}"
   info "Installed ${install_dir}/${bridge_name}"
-  printf '\nSet CURSOR_API_KEY, then run:\n  cc\n'
+  printf '\nSet CURSOR_API_KEY, then run:\n  cursor-composer\n'
   if [[ ":${PATH}:" != *":${install_dir}:"* ]]; then
     printf 'If the command is not found, open a new shell or:\n  export PATH="%s:$PATH"\n' "$install_dir"
   fi

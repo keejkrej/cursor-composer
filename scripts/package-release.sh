@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build and package cc + cursor-sdk-bridge for one Zig target.
+# Build and package cursor-composer + cursor-sdk-bridge for one Zig target.
 # Usage: package-release.sh <zig-target> <asset-stem> <tar.gz|zip>
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="${1:?zig target}"
-ASSET="${2:?asset stem, e.g. cc-linux-x64}"
+ASSET="${2:?asset stem, e.g. cursor-composer-linux-x64}"
 ARCHIVE="${3:?tar.gz or zip}"
 BRIDGE_VERSION="${BRIDGE_VERSION:-1.0.30}"
 ZIG="${ZIG:-zig}"
@@ -18,7 +18,7 @@ case "$TARGET" in
   x86_64-windows*) BRIDGE_OS=win32; BRIDGE_ARCH=x64 ;;
   aarch64-windows*)
     echo "cursor-sdk-bridge v${BRIDGE_VERSION} has no win32-arm64 asset (see cursor/sdk-bridge releases)." >&2
-    echo "Ship cc-windows-x64; ARM64 Windows can run that zip under x64 emulation." >&2
+    echo "Ship cursor-composer-windows-x64; ARM64 Windows can run that zip under x64 emulation." >&2
     exit 1
     ;;
   *)
@@ -31,13 +31,13 @@ cd "$ROOT"
 "$ZIG" build -Doptimize=ReleaseSafe -Dtarget="$TARGET" -Dcpu=baseline
 
 bin=""
-for candidate in zig-out/bin/cc zig-out/bin/cc.exe; do
+for candidate in zig-out/bin/cursor-composer zig-out/bin/cursor-composer.exe; do
   if [[ -f "$candidate" ]]; then
     bin="$candidate"
     break
   fi
 done
-[[ -n "$bin" ]] || { echo "cc binary missing after build" >&2; exit 1; }
+[[ -n "$bin" ]] || { echo "cursor-composer binary missing after build" >&2; exit 1; }
 
 bridge_asset="cursor-sdk-bridge-standalone-${BRIDGE_OS}-${BRIDGE_ARCH}.tar.gz"
 bridge_url="https://github.com/cursor/sdk-bridge/releases/download/v${BRIDGE_VERSION#v}/${bridge_asset}"

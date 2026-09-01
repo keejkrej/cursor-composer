@@ -1,5 +1,17 @@
 # fx
 
+## 0.2.4
+
+**Ship as `cursor-composer` so the command no longer shadows `cc`/`gcc`, and fix Windows console UTF-8.**
+
+### Breaking Changes
+
+- **Binary name**: The installed command is now `cursor-composer` instead of `cc`. Release archives are `cursor-composer-{os}-{arch}`. Re-run the installer; an existing `~/.cc/bin/cc` is not renamed in place.
+
+### Bug Fixes
+
+- **Windows encoding**: The Windows console is switched to UTF-8 (code page 65001) so the TUI banner and title render instead of OEM mojibake.
+
 ## 0.2.3
 
 **Load `/model` from Cursor ListModels instead of the six baked-in ids.**

@@ -393,7 +393,7 @@ fn executeNamedTool(alloc: Allocator, name: []const u8, args_json: []const u8) !
 
     const message = try std.fmt.allocPrint(
         alloc,
-        "cc host callback does not implement {s}. Cursor built-ins (Read, Write, Shell, Grep, Glob, WebSearch, WebFetch, Task) stay in the SDK Bridge.",
+        "cursor-composer host callback does not implement {s}. Cursor built-ins (Read, Write, Shell, Grep, Glob, WebSearch, WebFetch, Task) stay in the SDK Bridge.",
         .{name},
     );
     defer alloc.free(message);
